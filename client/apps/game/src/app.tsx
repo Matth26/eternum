@@ -1,4 +1,5 @@
 import "./index.css";
+import { DevToolsPanel } from "./ui/components/DevTools/DevToolsPanel";
 import { Toaster } from "./ui/components/toaster";
 import { TransactionNotification } from "./ui/components/tx-emit";
 import { WorldLoading } from "./ui/components/world-loading";
@@ -11,6 +12,7 @@ function App({ backgroundImage }: { backgroundImage: string }) {
       <TransactionNotification />
       <World backgroundImage={backgroundImage} />
       <WorldLoading />
+      <DevToolsPanel />
     </>
   );
 }
