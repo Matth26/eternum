@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { BatchRealmSettleScript } from './BatchRealmSettleScript'; // Import the actual script
+import { GetAllLocationsScript } from './GetAllLocationsScript'; // Import the new script
+import { GetMySeasonPassesScript } from './GetMySeasonPassesScript'; // Import the new script
 
 // Placeholder for where your script components will be imported
 // import { BatchRealmSettleScript } from './BatchRealmSettleScript';
 
-type ScriptId = 'batchSettleRealms' | null; // Add more script IDs as you create them
+type ScriptId = 'batchSettleRealms' | 'getAllLocations' | 'getMySeasonPasses' | null; // Add new script ID
 
 interface Script {
   id: ScriptId;
@@ -20,7 +22,9 @@ export const DevToolsPanel: React.FC = () => {
   const [selectedScript, setSelectedScript] = useState<ScriptId>(null);
 
   const availableScripts: Script[] = [
-    { id: 'batchSettleRealms', name: 'Batch Settle Realms', component: BatchRealmSettleScript }, // Use the actual component
+    { id: 'getAllLocations', name: 'Get All Locations (JSON)', component: GetAllLocationsScript },
+    { id: 'getMySeasonPasses', name: 'Get My Season Passes (JSON)', component: GetMySeasonPassesScript },
+    { id: 'batchSettleRealms', name: 'Batch Settle Realms', component: BatchRealmSettleScript },
     // Add other scripts here
     // e.g. { id: 'anotherScript', name: 'Another Dev Script', component: AnotherScriptComponent },
   ];
