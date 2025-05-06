@@ -22,7 +22,7 @@ export const BatchRealmSettleScript: React.FC = () => {
 
   const [jsonData, setJsonData] = useState<string>(`[
   {
-    "realm_id": 123,
+    "realm_id": 1234,
     "realm_settlement": { "side": 0, "layer": 2, "point": 0 }
   }
 ]`);
