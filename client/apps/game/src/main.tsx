@@ -40,6 +40,35 @@ async function init() {
   if (!rootElement) throw new Error("React root not found");
   const root = ReactDOM.createRoot(rootElement as HTMLElement);
 
+  // Unregister any active service workers (specifically targeting Vite PWA)
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((registrations) => {
+        for (const registration of registrations) {
+          // You might want to be more specific here if you have other service workers
+          // For now, this will unregister all service workers.
+          registration
+            .unregister()
+            .then((unregistered) => {
+              if (unregistered) {
+                console.log("Service worker unregistered successfully.");
+                // Optionally, reload the page to ensure the SW is gone
+                window.location.reload();
+              } else {
+                console.log("Service worker anregistration failed.");
+              }
+            })
+            .catch((error) => {
+              console.error("Service worker unregistration failed:", error);
+            });
+        }
+      })
+      .catch((error) => {
+        console.error("Error getting service worker registrations:", error);
+      });
+  }
+
   // Redirect mobile users to the mobile version of the game
   if (IS_MOBILE) {
     root.render(
@@ -71,7 +100,7 @@ async function init() {
           muted
           playsInline
         />
-        <div className="relative z-10 flex flex-col items-center justify-center dark:bg-dark-wood bg-brown/90 bg-hex-bg rounded-xl border panel-wood  p-10">
+        <div className="relative z-10 flex flex-col items-center justify-center bg-dark-wood bg-brown/90 bg-hex-bg rounded-xl border panel-wood  p-10">
           <EternumWordsLogo className="fill-current w-32 sm:w-40 lg:w-48 stroke-current mx-auto" />
 
           <p className="my-6 text-2xl">Eternum is being crafted, and will be available soon...</p>
