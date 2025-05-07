@@ -8,24 +8,24 @@ import { ViewOnMapIcon } from "@/ui/elements/view-on-map-icon";
 import { currencyFormat } from "@/ui/utils/utils";
 import { getBlockTimestamp } from "@/utils/timestamp";
 import {
-  ArmyManager,
-  divideByPrecision,
-  getBalance,
-  getEntityIdFromKeys,
-  getTroopName,
-  getTroopResourceId,
+    ArmyManager,
+    divideByPrecision,
+    getBalance,
+    getEntityIdFromKeys,
+    getTroopName,
+    getTroopResourceId,
 } from "@bibliothecadao/eternum";
 import { useDojo } from "@bibliothecadao/react";
 import { getTilesFromToriiClient } from "@bibliothecadao/torii-client";
 import {
-  ArmyInfo,
-  Direction,
-  getDirectionBetweenAdjacentHexes,
-  getNeighborHexes,
-  ID,
-  resources,
-  TroopTier,
-  TroopType,
+    ArmyInfo,
+    Direction,
+    getDirectionBetweenAdjacentHexes,
+    getNeighborHexes,
+    ID,
+    resources,
+    TroopTier,
+    TroopType,
 } from "@bibliothecadao/types";
 import { getComponentValue } from "@dojoengine/recs";
 import clsx from "clsx";
