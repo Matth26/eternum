@@ -1,7 +1,11 @@
 import { Position } from "@/types/position";
 import { queryRealmCount } from "@/ui/components/cityview/realm/settle-realm-component";
-import { generateSettlementLocations } from "@/ui/components/settlement/settlement-utils";
+import {
+  generateSettlementLocations,
+  getBanksLocations,
+} from "@/ui/components/settlement/settlement-utils";
 import { getMaxLayer } from "@/utils/settlement";
+import { calculateDistance } from "@bibliothecadao/eternum";
 import { useDojo } from "@bibliothecadao/react";
 import React, { useState } from 'react';
 
@@ -45,42 +49,63 @@ export const GetAllLocationsScript: React.FC = () => {
 
       // Step 2: Generate all potential locations
       const [allLocationsArray, _allLocationsMap] = generateSettlementLocations(maxLayers);
-      
-      // Step 3: Sort and transform locations
-      const processedLocations = allLocationsArray
+
+      // Step 2.5: Get Bank Locations
+      const bankLocations = getBanksLocations(components);
+      if (!bankLocations || bankLocations.length === 0) {
+        throw new Error('No bank locations found.');
+      }
+      setFeedback(`Found ${bankLocations.length} bank(s). Calculating distances...`);
+
+      // Step 3: Calculate distance to nearest bank, sort, and transform locations
+      const locationsWithBankDistance = allLocationsArray.map(location => {
+        const contractX = location.x;
+        const contractY = location.y;
+
+        let minDistanceToBank = Infinity;
+        let closestBank = null;
+
+        for (const bank of bankLocations) {
+          const distance = calculateDistance({ x: contractX, y: contractY }, { x: bank.x, y: bank.y });
+          if (distance < minDistanceToBank) {
+            minDistanceToBank = distance;
+            closestBank = bank;
+          }
+        }
+
+        const normalizedPosition = new Position({ x: contractX, y: contractY }).getNormalized();
+        return {
+          ...location, // side, layer, point
+          x: normalizedPosition.x, // Human-readable X
+          y: normalizedPosition.y, // Human-readable Y
+          contractX: contractX,
+          contractY: contractY,
+          minDistanceToBank: minDistanceToBank,
+        };
+      });
+
+      // Sort by distance to bank, take top 600, then sort by side
+      const valuableLocations = locationsWithBankDistance
+        .sort((a, b) => a.minDistanceToBank - b.minDistanceToBank)
+        .slice(0, 600)
         .sort((a, b) => {
           if (a.side !== b.side) {
             return a.side - b.side;
           }
-          if (a.layer !== b.layer) {
-            return a.layer - b.layer;
-          }
-          return a.point - b.point;
-        })
-        .map(location => {
-          const contractX = location.x;
-          const contractY = location.y;
-          const normalizedPosition = new Position({ x: contractX, y: contractY }).getNormalized();
-          return {
-            side: location.side,
-            layer: location.layer,
-            point: location.point,
-            x: normalizedPosition.x, // Human-readable X
-            y: normalizedPosition.y, // Human-readable Y
-            contractX: contractX,     // Original contract X
-            contractY: contractY,     // Original contract Y
-          };
+          return a.minDistanceToBank - b.minDistanceToBank;
         });
-      
+
       const outputObject = {
         realmCount,
         maxLayers,
-        totalLocationsGenerated: processedLocations.length,
-        locations: processedLocations, // Use the processed locations
+        totalBankLocations: bankLocations.length,
+        totalPotentialSettlementLocations: allLocationsArray.length,
+        selectedValuableLocationsCount: valuableLocations.length,
+        locations: valuableLocations,
       };
 
       setJsonDataOutput(JSON.stringify(outputObject, null, 2));
-      setFeedback(`Successfully generated ${processedLocations.length} total possible locations up to layer ${maxLayers}.`);
+      setFeedback(`Successfully processed locations. Found ${valuableLocations.length} valuable locations closest to banks (out of ${allLocationsArray.length} total possible up to layer ${maxLayers}), ordered by side.`);
       
     } catch (error) {
       console.error("Error generating all locations:", error);
@@ -156,4 +181,4 @@ export const GetAllLocationsScript: React.FC = () => {
       )}
     </div>
   );
-}; 
+};

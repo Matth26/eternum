@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
-import { BatchRealmSettleScript } from './BatchRealmSettleScript'; // Import the actual script
-import { GetAllLocationsScript } from './GetAllLocationsScript'; // Import the new script
-import { GetMySeasonPassesScript } from './GetMySeasonPassesScript'; // Import the new script
+import { BatchRealmsPerZoneScript } from './BatchRealmsPerZoneScript'; // Import the new script
 
 // Placeholder for where your script components will be imported
 // import { BatchRealmSettleScript } from './BatchRealmSettleScript';
 
-type ScriptId = 'batchSettleRealms' | 'getAllLocations' | 'getMySeasonPasses' | null; // Add new script ID
+type ScriptId = 'batchSettleRealms' | 'getAllLocations' | 'getMySeasonPasses' | 'batchRealmsPerZone' | null; // Add new script ID
 
 interface Script {
   id: ScriptId;
@@ -22,9 +20,10 @@ export const DevToolsPanel: React.FC = () => {
   const [selectedScript, setSelectedScript] = useState<ScriptId>(null);
 
   const availableScripts: Script[] = [
-    { id: 'getAllLocations', name: 'Get All Locations (JSON)', component: GetAllLocationsScript },
-    { id: 'getMySeasonPasses', name: 'Get My Season Passes (JSON)', component: GetMySeasonPassesScript },
-    { id: 'batchSettleRealms', name: 'Batch Settle Realms', component: BatchRealmSettleScript },
+    //{ id: 'getAllLocations', name: 'Get All Locations (JSON)', component: GetAllLocationsScript },
+    //{ id: 'getMySeasonPasses', name: 'Get My Season Passes (JSON)', component: GetMySeasonPassesScript },
+    //{ id: 'batchSettleRealms', name: 'Batch Settle Realms', component: BatchRealmSettleScript }, // Corrected component
+    { id: 'batchRealmsPerZone', name: 'Settle realms per zone', component: BatchRealmsPerZoneScript },
     // Add other scripts here
     // e.g. { id: 'anotherScript', name: 'Another Dev Script', component: AnotherScriptComponent },
   ];
@@ -37,7 +36,7 @@ export const DevToolsPanel: React.FC = () => {
     left: '50%',
     transform: 'translateX(-50%)',
     width: '400px',
-    maxHeight: '500px',
+    maxHeight: '80vh',
     backgroundColor: 'rgba(50, 50, 50, 0.9)',
     border: '1px solid #666',
     borderRadius: '8px',
@@ -103,7 +102,7 @@ export const DevToolsPanel: React.FC = () => {
         style={minimizedButtonStyle}
         onClick={() => setIsOpen(true)}
       >
-        Open DevTools
+        Open Scripts Panel
       </button>
     );
   }
@@ -111,7 +110,7 @@ export const DevToolsPanel: React.FC = () => {
   return (
     <div style={panelStyle}>
       <div style={headerStyle} onClick={() => setIsOpen(false)}>
-        <span>Developer Scripts</span>
+        <span>Game Scripts</span>
         <span>{selectedScript ? `Script: ${availableScripts.find(s => s.id === selectedScript)?.name}` : 'No script selected'}</span>
         <button onClick={(e) => { e.stopPropagation(); setIsOpen(false); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '1.2em' }}>
           &times; {/* Minimize/Close Icon */}
