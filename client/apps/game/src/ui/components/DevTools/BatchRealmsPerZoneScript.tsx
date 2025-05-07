@@ -110,6 +110,10 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
   const [maxLayers, setMaxLayersState] = useState<number | null>(null);
   const [allLocationsMap, setAllLocationsMap] = useState<Map<string, SettlementLocation> | null>(null);
 
+  // New state for map export
+  const [banksForExport, setBanksForExport] = useState<SettlementLocation[] | null>(null);
+  const [occupiedLocationsForExport, setOccupiedLocationsForExport] = useState<{x: number, y: number}[] | null>(null);
+
 
   // TODO: Implement fetchAllData function (Step 2 & 3 from plan)
   const fetchAllData = useCallback(async () => {
@@ -170,6 +174,7 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
       const occupiedLocations = await getOccupiedLocations(ContractAddress(account.address), components, generatedLocationsMap);
       const occupiedCoords = new Set(occupiedLocations.map(loc => `${loc.x},${loc.y}`)); 
       console.log(`fetchAllData: Found ${occupiedCoords.size} occupied locations.`);
+      setOccupiedLocationsForExport(occupiedLocations.map(loc => ({ x: loc.x, y: loc.y }))); // Store for export
 
       const availableGeneratedLocationsArray = allGeneratedLocationsArray.filter(loc => 
         !occupiedCoords.has(`${loc.contractX},${loc.contractY}`)
@@ -204,13 +209,23 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
         throw new Error("No bank locations found (or all were invalid)."); 
       }
 
-      if (allBanks.length < 4) {
-        console.warn(`fetchAllData: Only ${allBanks.length} banks found. Some bank zones may be duplicates or empty.`); 
-        setFeedback(`Warning: Only ${allBanks.length} banks found. Need at least 4 for all bank zones. Some bank zones may be duplicates or empty.`);
+      // Log allBanks details
+      console.log(`fetchAllData: allBanks count: ${allBanks.length}`);
+      console.log(`fetchAllData: allBanks content (first 3 coordinates):`, allBanks.slice(0,3).map(b => ({x: b.contractX, y: b.contractY })));
+      setBanksForExport(allBanks); // Store for export
+
+      // Determine the target banks for Zones 7-12
+      const targetBanksForZones7to12 = allBanks.slice(0, 6); // Use first 6 banks
+      console.log(`fetchAllData: Using ${targetBanksForZones7to12.length} banks for Zones 7-${7 + targetBanksForZones7to12.length - 1}.`);
+      targetBanksForZones7to12.forEach((bank, index) => {
+          console.log(`  Bank ${index + 1} (for Zone ${7 + index}): Layer ${bank.layer}, Pos (${bank.contractX}, ${bank.contractY})`);
+      });
+
+      if (allBanks.length < 6) {
+        // Adjust warning based on actual banks needed now
+        console.warn(`fetchAllData: Only ${allBanks.length} banks found. Need 6 for all bank zones 7-12. Some zones will be empty.`); 
+        setFeedback(`Warning: Only ${allBanks.length} banks found. Need 6 for Zones 7-12.`);
       }
-      
-      // Fallthrough to allow script to run with fewer bank zones if possible, or let user decide.
-      // setFeedback("Processing zone locations..."); // This was an old feedback line, the one below is more accurate for timing
       
       setFeedback("Processing zone locations based on AVAILABLE spots...");
 
@@ -223,110 +238,62 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
         
         const locationsForThisSide = availableGeneratedLocationsArray.filter(loc => loc.side === side);
 
-        const locationsWithDist = locationsForThisSide.map((loc, index) => {
-          const dist = calculateDistance({x: loc.contractX, y: loc.contractY}, gameCenter);
-          if (side === 5 && index < 5) { // Log first 5 for side 5
+        // Corrected sorting: primary by layer, secondary by point
+        const sortedSideLocations = locationsForThisSide.sort((a, b) => {
+          if (a.layer !== b.layer) {
+            return a.layer - b.layer; // Ascending layer number
           }
-          return { loc, dist };
+          return a.point - b.point; // Ascending point number as tie-breaker
         });
-
-        // Log before sort for side 5
-        if (side === 5 && locationsWithDist.length > 0) {
-            console.log(`fetchAllData: Side 5 - BEFORE sort (first 5 distances):`, locationsWithDist.slice(0,5).map(item => item.dist));
-        }
-
-        const sortedLocations = locationsWithDist.sort((a, b) => {
-            if (isNaN(a.dist) || isNaN(b.dist)) {
-                console.error(`fetchAllData: NaN distance encountered in sort! a.dist: ${a.dist}, b.dist: ${b.dist}`, {a,b});
-                // Handle NaN: perhaps place them at the end or throw an error
-                if (isNaN(a.dist) && isNaN(b.dist)) return 0;
-                return isNaN(a.dist) ? 1 : -1; // NaNs go to the end
-            }
-            return a.dist - b.dist;
-        });
-
-        // Log after sort for side 5
-        if (side === 5 && sortedLocations.length > 0) {
-            console.log(`fetchAllData: Side 5 - AFTER sort (first 5 distances):`, sortedLocations.slice(0,5).map(item => item.dist));
-        }
-
-        const sideLocations = sortedLocations.map(item => item.loc as SettlementLocation);
         
-        zone1to6Candidates.push(sideLocations);
+        // Logging for verification of this new sort (for ALL sides 0-5)
+        if (side >= 0 && side <= 5) { // Check all side-based zones
+            console.log(`fetchAllData: Side ${side} (Zone ${side + 1}) - AFTER new sort (first 5 candidates):`, 
+                sortedSideLocations.slice(0,5).map(loc => ({side: loc.side, layer: loc.layer, point: loc.point, x: loc.contractX, y: loc.contractY}))
+            );
+        }
+
+        zone1to6Candidates.push(sortedSideLocations);
       }
       console.log("fetchAllData: Finished zone1to6Candidates loop. Total sides processed:", zone1to6Candidates.length);
 
-      // Select 4 distinct banks for zones 7-10
-      console.log("fetchAllData: Starting bank selection for zones 7-10..."); 
+      // Generate candidate lists for BANK ZONES (7-12)
+      let zone7to12Candidates: SettlementLocation[][] = [];
+      for (const [index, targetBank] of targetBanksForZones7to12.entries()) {
+        const bankZoneNumber = 7 + index;
+        const bankIdentifier = `Bank ${index + 1} (Zone ${bankZoneNumber})`; // Use 1-based index for logging
+        console.log(`fetchAllData: Processing ${bankIdentifier} (Layer ${targetBank?.layer}) for bank zone candidates.`);
 
-      // Changed to individual declarations as a workaround for potential transpiler/engine bug
-      let bankW: SettlementLocation | undefined;
-      let bankE: SettlementLocation | undefined;
-      let bankSW: SettlementLocation | undefined;
-      let bankSE: SettlementLocation | undefined;
-
-      // Restore original bank selection logic
-      if (allBanks.length > 0) { 
-        const sortedBanksByX = [...allBanks].sort((a, b) => a.contractX - b.contractX);
-        bankW = sortedBanksByX[0];
-        bankE = sortedBanksByX[sortedBanksByX.length - 1];
-
-        const midXBanks = allBanks.filter(b => b !== bankW && b !== bankE);
-        if (midXBanks.length >= 2) {
-            const sortedMidByY = midXBanks.sort((a,b) => a.contractY - b.contractY);
-            bankSW = sortedMidByY[0]; 
-            bankSE = sortedMidByY[sortedMidByY.length - 1]; 
-        } else if (midXBanks.length === 1) {
-            bankSW = midXBanks[0];
-            bankSE = midXBanks[0]; 
-        } else { 
-            bankSW = bankW; 
-            bankSE = bankE; 
-        }
-
-         // This specific block for allBanks.length 1,2,3 is mostly for ensuring all banks are defined if initial count is very low.
-         // Given allBanks.length is 6 in the test case, this block might not be strictly hit for assignment beyond initial W/E/SW/SE logic.
-        if (allBanks.length === 1) { 
-            bankE = bankW; bankSW = bankW; bankSE = bankW;
-        }
-        else if (allBanks.length === 2) { 
-            bankSW = bankW; bankSE = bankE; 
-        }
-        else if (allBanks.length === 3) { 
-            const thirdBank = allBanks.find(b => b !== bankW && b !== bankE);
-            bankSW = thirdBank || bankW; 
-            bankSE = bankE;
-        }
-        console.log("fetchAllData: Final bank assignments:", {bankW, bankE, bankSW, bankSE}); // New log
-      } else {
-        console.log("fetchAllData: Skipping bank selection as allBanks is empty or not > 0.");
-      }
-      
-      const targetBanks: (SettlementLocation | undefined)[] = [bankW, bankSW, bankSE, bankE];
-
-      let zone7to10Candidates: SettlementLocation[][] = [];
-      // Add index to track which bank we are processing
-      for (const [index, targetBank] of targetBanks.entries()) {
-        const bankIdentifier = targetBank ? `Bank ${index} (x:${targetBank.contractX}, y:${targetBank.contractY})` : `Bank ${index} (undefined)`;
-        console.log(`fetchAllData: Processing ${bankIdentifier} for zone7to10.`);
-
-        if (!targetBank) { 
-            console.log(`fetchAllData: Skipping undefined bank at index ${index}.`);
-            zone7to10Candidates.push([]); 
+        // Check if the target bank has a valid layer property
+        if (!targetBank || typeof targetBank.layer !== 'number' || isNaN(targetBank.layer)) {
+            console.warn(`fetchAllData: Target ${bankIdentifier} does not have a valid layer (${targetBank?.layer}). Skipping generation for this bank zone.`);
+            zone7to12Candidates.push([]); // Add empty list for this zone
             continue;
         }
+        const bankLayer = targetBank.layer;
+        // console.log(`  Using Bank Layer ${bankLayer} for center distance constraint.`); // Redundant log line
 
-        const distBankToCenter = calculateDistance({x: targetBank.contractX, y: targetBank.contractY}, gameCenter);
-
+        // Filter using LAYERS, with specific adjustment for zones 8, 10, 11, 12
         const filteredLocations = availableGeneratedLocationsArray
           .filter(loc => {
-            const distLocToCenter = calculateDistance({x: loc.contractX, y: loc.contractY}, gameCenter);
-            // Add check for NaN distLocToCenter just in case
-            if (isNaN(distLocToCenter)) {
-                console.warn(`fetchAllData: NaN distLocToCenter for loc ${loc.contractX},${loc.contractY}`);
-                return false; // Exclude locations with NaN distance to center
+            // Ensure location has a valid layer
+            if (typeof loc.layer !== 'number' || isNaN(loc.layer)) {
+                console.warn(`fetchAllData: Location ${loc.contractX},${loc.contractY} missing valid layer.`);
+                return false;
             }
-            return distLocToCenter <= distBankToCenter;
+            
+            // Apply layer constraint based on the zone number
+            const currentBankZoneIsSpecial = [8, 10, 11, 12].includes(bankZoneNumber);
+            const maxAllowedLayer = currentBankZoneIsSpecial ? bankLayer - 2 : bankLayer;
+            
+            if (currentBankZoneIsSpecial) {
+                 // Optional: Log if a location is filtered out due to the stricter rule
+                 // if (loc.layer === bankLayer || loc.layer === bankLayer - 1) {
+                 //    console.log(`    Zone ${bankZoneNumber}: Filtering out loc layer ${loc.layer} because max is ${maxAllowedLayer}`);
+                 // }
+            }
+
+            return loc.layer <= maxAllowedLayer; 
           });
         
         const locationsWithDist = filteredLocations.map(loc => ({
@@ -344,31 +311,82 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
         });
 
         const bankZoneLocations = sortedLocations.map(item => item.loc as SettlementLocation);
-        zone7to10Candidates.push(bankZoneLocations);
-      }
-      const allZoneCandidateLists = [...zone1to6Candidates, ...zone7to10Candidates]; 
+        
+        // Log first few candidates for verification (e.g., for Zone 7 / Bank 1)
+        // Modify log to match new structure
+        console.log(`  fetchAllData: ${bankIdentifier} - AFTER LAYER FILTER & BANK DIST SORT (first 5 candidates):`, 
+            bankZoneLocations.slice(0,5).map(loc => ({layer: loc.layer, distToBank: calculateDistance(loc, targetBank).toFixed(2), x: loc.contractX, y: loc.contractY}))
+        );           
 
-      const finalProcessedZones: SettlementLocation[][] = Array(10).fill(null).map(() => []);
+        zone7to12Candidates.push(bankZoneLocations);
+      }
+      // Ensure 6 lists exist even if banks < 6
+      while(zone7to12Candidates.length < 6) {
+          zone7to12Candidates.push([]);
+      }
+
+      // Combine side-based and new bank-based lists (total 12 zones)
+      const allZoneCandidateLists = [...zone1to6Candidates, ...zone7to12Candidates]; 
+
+      const finalProcessedZones: SettlementLocation[][] = Array(12).fill(null).map(() => []); // Initialize for 12 zones
       const allocatedContractCoords = new Set<string>();
 
-      for (let i = 0; i < 10; i++) { // For each zone (0-9 for zones 1-10)
-        const currentZoneCandidates = allZoneCandidateLists[i] || []; 
+      // Define the new processing order: Side zones 1-6, then Bank zones 7-12
+      const processingOrder = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Indices for 12 zones
 
-        let addedCount = 0;
+      console.log("[fetchAllData] Using new zone processing order (12 zones):", processingOrder.map(i => `Zone ${i+1}`).join(", "));
+
+      for (const zoneIndexInAllCandidatesList of processingOrder) { // Iterate in the defined order (0-11)
+        const currentZoneCandidates = allZoneCandidateLists[zoneIndexInAllCandidatesList] || []; 
+
+        // Enhanced logging for each zone being processed (Updated for 12 zones)
+        let currentProcessingZoneLabelDetail = "Unknown Zone Type";
+        let baseZoneIdForDisplay = zoneIndexInAllCandidatesList + 1; 
+
+        if (zoneIndexInAllCandidatesList >= 0 && zoneIndexInAllCandidatesList <= 5) { // Side-based zones 1-6
+            const sideLabels = ["Side 0 (NE)", "Side 1 (E)", "Side 2 (SE)", "Side 3 (SW)", "Side 4 (W)", "Side 5 (NW)"];
+            currentProcessingZoneLabelDetail = `${sideLabels[zoneIndexInAllCandidatesList]} (corresponds to Zone ${baseZoneIdForDisplay})`;
+        } else if (zoneIndexInAllCandidatesList >= 6 && zoneIndexInAllCandidatesList <= 11) { // Bank-based zones 7-12
+            const bankIndex = zoneIndexInAllCandidatesList - 6; // 0-based index for the bank used
+            currentProcessingZoneLabelDetail = `Bank ${bankIndex + 1} (corresponds to Zone ${baseZoneIdForDisplay})`;
+        }
+            
+        console.log(`[fetchAllData - Allocation for ${currentProcessingZoneLabelDetail}] Processing ${currentZoneCandidates.length} candidates.`);
+        let alreadyAllocatedCount = 0;
+        let newToThisZoneCount = 0;
+        // Log first 3 candidates for side zones only
+        if (currentZoneCandidates.length > 0 && zoneIndexInAllCandidatesList <=5) {
+            console.log(`  First 3 candidates for ${currentProcessingZoneLabelDetail} (side, layer, point, x, y):`, 
+                currentZoneCandidates.slice(0,3).map(c => ({side: c.side, layer: c.layer, point: c.point, x:c.contractX, y:c.contractY}))
+            );
+        }
+
+        for(const cand of currentZoneCandidates) {
+            if(allocatedContractCoords.has(`${cand.contractX},${cand.contractY}`)) {
+              alreadyAllocatedCount++;
+            } else {
+              newToThisZoneCount++;
+            }
+        }
+        console.log(`  [fetchAllData - Allocation for ${currentProcessingZoneLabelDetail}] Of these ${currentZoneCandidates.length} candidates, ${alreadyAllocatedCount} were already allocated. ${newToThisZoneCount} are new potential spots (up to 50).`);
+        
+
+        // Original allocation logic per zone, now using zoneIndexInAllCandidatesList (0-11)
         for (const candidateLoc of currentZoneCandidates) {
-          if (finalProcessedZones[i].length >= 50) {
+          if (finalProcessedZones[zoneIndexInAllCandidatesList].length >= 50) { 
             break; 
           }
 
           const coordString = `${candidateLoc.contractX},${candidateLoc.contractY}`;
           if (!allocatedContractCoords.has(coordString)) {
-            finalProcessedZones[i].push(candidateLoc);
+            finalProcessedZones[zoneIndexInAllCandidatesList].push(candidateLoc); // And here
             allocatedContractCoords.add(coordString);
-            addedCount++;
+            // addedCount++; // This variable was per-zone, ensure it's handled if needed, or remove if not used.
+                         // Currently, it's not used outside this inner loop for any feedback.
           }
         }
       }
-      setAllZoneLocations(finalProcessedZones);
+      setAllZoneLocations(finalProcessedZones); // finalProcessedZones now has 12 elements
 
       // 4. Fetch Player's Season Passes (from GetMySeasonPassesScript logic)
       const tokens = await queryAllPlayerTokens(account.address);
@@ -415,6 +433,100 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
     }
   }, [account, components]); // queryRealmCount, getMaxLayer, generateSettlementLocations, getBanksLocations, getSeasonPassAddress are stable utils
 
+  // Helper for zone labels in export
+  const getZoneLabelForExport = (zoneNum: number): string => {
+    if (zoneNum >= 1 && zoneNum <= 6) {
+        const sideLabels = ["Zone 1 (NE)", "Zone 2 (E)", "Zone 3 (SE)", "Zone 4 (SW)", "Zone 5 (W)", "Zone 6 (NW)"];
+        return sideLabels[zoneNum - 1];
+    } else if (zoneNum >= 7 && zoneNum <= 12) {
+        // Assuming banks are used in the order they appear in banksForExport for Zones 7-12
+        return `Zone ${zoneNum} (Bank ${zoneNum - 6})`; 
+    } else {
+        return `Zone ${zoneNum}`;
+    }
+  };
+
+  const handleExportMapData = useCallback(() => {
+    if (!allLocationsMap || !banksForExport || !occupiedLocationsForExport || allZoneLocations.length === 0 || maxLayers === null) {
+      setFeedback("Error: Please fetch data first (ensure all map data including maxLayers is available) before exporting.");
+      return;
+    }
+
+    setFeedback("Preparing map data for JSON export...");
+
+    const normalizeCoords = (contractX: number, contractY: number) => {
+      const pos = new PositionFromTypes({ x: contractX, y: contractY });
+      return pos.getNormalized(); // Returns {x, y}
+    };
+
+    const allPotentialSpots = Array.from(allLocationsMap.values() as Iterable<SettlementLocation>).map((loc: SettlementLocation) => {
+      const normalized = normalizeCoords(loc.contractX, loc.contractY);
+      return {
+        normalizedX: normalized.x,
+        normalizedY: normalized.y,
+        originalContractX: loc.contractX, // Keep originals for reference if needed
+        originalContractY: loc.contractY,
+        side: loc.side,
+        layer: loc.layer,
+        point: loc.point,
+      };
+    });
+
+    const mapData = {
+      maxLayers: maxLayers,
+      center: normalizeCoords(0,0), // Normalize center as well
+      banks: banksForExport.map((b: SettlementLocation) => {
+        const normalized = normalizeCoords(b.contractX, b.contractY);
+        return {
+          normalizedX: normalized.x,
+          normalizedY: normalized.y,
+          originalContractX: b.contractX,
+          originalContractY: b.contractY,
+          side: b.side, 
+          layer: b.layer, 
+          point: b.point 
+        };
+      }),
+      occupiedContractSpots: occupiedLocationsForExport.map((occ: {x: number, y: number}) => {
+        // occupiedLocationsForExport already stores contractX/Y as x/y directly
+        const normalized = normalizeCoords(occ.x, occ.y);
+        return {
+          normalizedX: normalized.x,
+          normalizedY: normalized.y,
+          originalContractX: occ.x,
+          originalContractY: occ.y,
+        };
+      }), 
+      allPotentialSpots: allPotentialSpots, 
+      zones: allZoneLocations.map((zoneData: SettlementLocation[], index: number) => ({
+        zoneId: index + 1,
+        name: getZoneLabelForExport(index + 1),
+        locations: zoneData.map((loc: SettlementLocation) => {
+          const normalized = normalizeCoords(loc.contractX, loc.contractY);
+          return {
+            normalizedX: normalized.x,
+            normalizedY: normalized.y,
+            originalContractX: loc.contractX,
+            originalContractY: loc.contractY,
+            side: loc.side,
+            layer: loc.layer,
+            point: loc.point,
+          };
+        }),
+      })),
+    };
+
+    const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
+      JSON.stringify(mapData, null, 2)
+    )}`;
+    const link = document.createElement("a");
+    link.href = jsonString;
+    link.download = "eternum_settlement_map_data.json"; // More descriptive name
+    link.click();
+    setFeedback("Map data JSON download initiated.");
+
+  }, [allLocationsMap, banksForExport, occupiedLocationsForExport, allZoneLocations, maxLayers]);
+
   // TODO: Implement countPotentialNeighbors function (Step 4 from plan)
   const countPotentialNeighbors = useCallback((
     location: SettlementLocation,
@@ -456,6 +568,10 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
         return;
     }
     
+    if (selectedZoneId === 8) {
+        console.log(`[Zone 8 Debug] Initial locations count: ${locationsForThisZone.length}`);
+    }
+
     setFeedback(`Generating settlement plan for Zone ${selectedZoneId} with ${playerSeasonPasses.length} passes and ${locationsForThisZone.length} locations...`);
 
     const settlementPlan: RealmSettlementInput[] = [];
@@ -463,61 +579,107 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
 
     const wonderPasses = playerSeasonPasses.filter((p: SeasonPassInfo) => {
         const realm = getOffchainRealm(Number(p.tokenId)); // getOffchainRealm needs number
-        return realm?.wonder;
+        const isWonder = realm?.wonder;
+        // New Log for Wonder Pass Identification
+        if (selectedZoneId === 8) {
+            console.log(`[generateSettlement - Wonder Filter Debug] Pass ID ${p.realmId} (Token ID ${p.tokenId}): getOffchainRealm returns ${realm ? `object with wonder: ${realm.wonder}` : 'null'}. Evaluated as Wonder: ${!!isWonder}`);
+        }
+        return !!isWonder; // Ensure boolean
     });
     const normalPasses = playerSeasonPasses.filter((p: SeasonPassInfo) => {
         const realm = getOffchainRealm(Number(p.tokenId));
         return !realm?.wonder;
     });
     
+    if (selectedZoneId === 8) {
+        console.log(`[Zone 8 Debug] Wonder passes: ${wonderPasses.length}, Normal passes: ${normalPasses.length}`);
+    }
+
     // Place wonders first
     wonderPasses.forEach((pass: SeasonPassInfo) => {
+        let spotAssigned: SettlementLocation | null = null;
+        let spotIndex = -1;
+        let usedShiftFallback = false;
+
+        if (selectedZoneId === 8) {
+            console.log(`[Zone 8 Debug] Processing WONDER pass ${pass.realmId}. Spots remaining: ${availableSpotsInZone.length}`);
+        }
+
         let placed = false;
         for (let i = 0; i < availableSpotsInZone.length; i++) {
             const spot = availableSpotsInZone[i];
-            if (countPotentialNeighbors(spot, allLocationsMap) === 6) {
+            const neighborCount = countPotentialNeighbors(spot, allLocationsMap);
+             if (selectedZoneId === 8 && i < 5) { // Log check for first few spots
+                console.log(`[Zone 8 Debug] Wonder Check: Spot ${i} (${spot.contractX},${spot.contractY}), Neighbors: ${neighborCount}`);
+            }
+            if (neighborCount === 6) {
                 const realmData = getOffchainRealm(Number(pass.tokenId));
                 if (realmData) {
+                    if (selectedZoneId === 8) console.log(`[Zone 8 Debug] Found 6-neighbor spot for wonder ${pass.realmId} at index ${i}`);
+                    spotAssigned = spot;
+                    spotIndex = i;
                     settlementPlan.push({
                         realm_id: realmData.realmId,
                         realm_settlement: { side: spot.side, layer: spot.layer, point: spot.point }
                     });
-                    availableSpotsInZone.splice(i, 1); // Remove spot
+                    // Remove spot using splice ONLY if found this way
+                    availableSpotsInZone.splice(i, 1); 
                     placed = true;
                     break;
                 }
             }
         }
-        // Fallback: if no wonder spot found, or if it's not actually a wonder (should be filtered by wonderPasses), place normally
+        
+        // Fallback: if no wonder spot found, place normally using shift()
         if (!placed) {
-            const spot = availableSpotsInZone.shift();
+            usedShiftFallback = true;
+            const spot = availableSpotsInZone.shift(); // Takes from the START of the array
             if (spot) {
                 const realmData = getOffchainRealm(Number(pass.tokenId));
                  if (realmData) {
+                    if (selectedZoneId === 8) console.log(`[Zone 8 Debug] No 6-neighbor spot found for wonder ${pass.realmId}. Using shift() fallback.`);
+                    spotAssigned = spot;
                     settlementPlan.push({
                         realm_id: realmData.realmId,
                         realm_settlement: { side: spot.side, layer: spot.layer, point: spot.point }
                     });
+                } else {
+                    if (selectedZoneId === 8) console.warn(`[Zone 8 Debug] Wonder Fallback: Could not get realm data for pass ${pass.realmId}`);
                 }
             } else {
                  setFeedback(`Warning: Not enough spots in Zone ${selectedZoneId} for wonder realm ${pass.realmId}`);
+                 if (selectedZoneId === 8) console.warn(`[Zone 8 Debug] Wonder Fallback: No spots left via shift() for pass ${pass.realmId}`);
             }
+        }
+        if (selectedZoneId === 8) {
+            console.log(`[Zone 8 Debug] WONDER pass ${pass.realmId} assigned to: ${spotAssigned ? `(${spotAssigned.contractX},${spotAssigned.contractY})` : 'None'}. Method: ${placed ? `Splice@${spotIndex}` : (usedShiftFallback ? 'ShiftFallback' : 'Error?')}. Spots remaining: ${availableSpotsInZone.length}`);
         }
     });
 
     // Place normal passes
     normalPasses.forEach((pass: SeasonPassInfo) => {
-        const spot = availableSpotsInZone.shift();
+        let spotAssigned: SettlementLocation | null = null;
+        if (selectedZoneId === 8) {
+            console.log(`[Zone 8 Debug] Processing NORMAL pass ${pass.realmId}. Spots remaining: ${availableSpotsInZone.length}`);
+        }
+        const spot = availableSpotsInZone.shift(); // Takes from the START of the array
         if (spot) {
             const realmData = getOffchainRealm(Number(pass.tokenId));
             if (realmData) {
+                spotAssigned = spot;
                 settlementPlan.push({
                     realm_id: realmData.realmId,
                     realm_settlement: { side: spot.side, layer: spot.layer, point: spot.point }
                 });
+            } else {
+                 if (selectedZoneId === 8) console.warn(`[Zone 8 Debug] Normal: Could not get realm data for pass ${pass.realmId}`);
             }
         } else {
             setFeedback(`Warning: Not enough spots in Zone ${selectedZoneId} for normal realm ${pass.realmId}`);
+             if (selectedZoneId === 8) console.warn(`[Zone 8 Debug] Normal: No spots left via shift() for pass ${pass.realmId}`);
+        }
+         if (selectedZoneId === 8) {
+            console.log(`[Zone 8 Debug] NORMAL pass ${pass.realmId} assigned to: ${spotAssigned ? `(${spotAssigned.contractX},${spotAssigned.contractY})` : 'None'}. Spots remaining: ${availableSpotsInZone.length}`);
         }
     });
 
@@ -615,14 +777,23 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
             id="zoneSelect"
             style={commonStyles.select}
             value={selectedZoneId} 
-            onChange={(e) => setSelectedZoneId(Number(e.target.value))}
+            onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedZoneId(Number(e.target.value))}
             disabled={isLoading || allZoneLocations.length === 0}
         >
-          {Array.from({ length: 10 }, (_, i) => i + 1).map(zoneNum => (
-            <option key={zoneNum} value={zoneNum}>Zone {zoneNum}</option>
+          {Array.from({ length: 12 }, (_, i) => i + 1).map(zoneNum => (
+            <option key={zoneNum} value={zoneNum}>{getZoneLabelForExport(zoneNum)}</option>
           ))}
         </select>
       </div>
+
+      {/* Add Export Button Here */}
+      <button
+        style={{ ...commonStyles.button, backgroundColor: '#17a2b8', marginLeft: '10px' }}
+        onClick={handleExportMapData}
+        disabled={isLoading || allZoneLocations.length === 0}
+      >
+        Export Map Data
+      </button>
 
       {feedback && (
         <div style={{ ...commonStyles.feedback, backgroundColor: feedback.startsWith('Error:') || feedback.startsWith('Warning:') ? '#d9534f' : '#5bc0de' }}>
