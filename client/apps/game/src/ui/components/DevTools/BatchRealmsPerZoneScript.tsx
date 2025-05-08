@@ -8,12 +8,28 @@ import {
 } from "@/ui/components/settlement/settlement-utils";
 import { getSeasonPassAddress } from "@/utils/addresses"; // For season pass contract address
 import { getMaxLayer } from "@/utils/settlement";
-import { calculateDistance, getOffchainRealm } from "@bibliothecadao/eternum";
+import { calculateDistance, configManager, getOffchainRealm } from "@bibliothecadao/eternum";
 import { useDojo } from "@bibliothecadao/react";
 import { ContractAddress, getNeighborHexes } from "@bibliothecadao/types"; // For neighbor calculation
 import { gql } from "graphql-request"; // For season pass fetching
-import React, { useCallback, useEffect, useState } from 'react';
-import { addAddressPadding } from "starknet"; // For season pass fetching
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { addAddressPadding, RpcProvider } from "starknet"; // For season pass fetching and RpcProvider
+
+// Zone Colors Constant
+const ZONE_COLORS: { [key: number]: string } = {
+  1: '#be4bdb', // Bright Purple
+  2: '#845ef7', // Indigo
+  3: '#5c7cfa', // Bright Blue
+  4: '#339af0', // Medium Blue
+  5: '#22b8cf', // Cyan
+  6: '#20c997', // Teal/Mint Green
+  7: '#51cf66', // Bright Green
+  8: '#fcc419', // Yellow
+  9: '#ff922b', // Orange
+  10: '#ff6b6b', // Coral/Light Red
+  11: '#fa5252', // Red
+  12: '#e03131'  // Deeper Red
+};
 
 // Interfaces (some might be defined elsewhere and imported)
 interface SettlementLocation {
@@ -93,11 +109,23 @@ const queryAllPlayerTokens = async (accountAddress: string) => {
 export const BatchRealmsPerZoneScript: React.FC = () => {
   const {
     account: { account },
-    setup: { 
-      components, // Needed for getBanksLocations, and potentially other utils
-      systemCalls: { create_multiple_realms },
-    },
+    setup, 
   } = useDojo();
+  
+  // Destructure setup parts safely using optional chaining
+  const components = setup?.components;
+  const create_multiple_realms = setup?.systemCalls?.create_multiple_realms;
+
+  // Create a memoized RpcProvider instance for fetching blocks
+  const rpcProvider = useMemo(() => {
+    const nodeUrl = env.VITE_PUBLIC_NODE_URL;
+    if (!nodeUrl) {
+      console.error("BatchRealmsPerZoneScript: VITE_PUBLIC_NODE_URL is not defined!");
+      return null; // Return null if URL is missing
+    }
+    console.log("BatchRealmsPerZoneScript: Creating RpcProvider instance.");
+    return new RpcProvider({ nodeUrl });
+  }, []); 
 
   const [isLoading, setIsLoading] = useState(false);
   const [feedback, setFeedback] = useState<string>('');
@@ -114,11 +142,18 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
   const [banksForExport, setBanksForExport] = useState<SettlementLocation[] | null>(null);
   const [occupiedLocationsForExport, setOccupiedLocationsForExport] = useState<{x: number, y: number}[] | null>(null);
 
+  // State for settling status light
+  const [settlingStartTimestamp, setSettlingStartTimestamp] = useState<number | null>(null);
+  const [latestBlockTimestamp, setLatestBlockTimestamp] = useState<number | null>(null);
+  const [isSettlingActive, setIsSettlingActive] = useState<boolean>(false);
+  const [seasonConfigError, setSeasonConfigError] = useState<string | null>(null);
+  const [pulseOpacity, setPulseOpacity] = useState<number>(1);
+
 
   // TODO: Implement fetchAllData function (Step 2 & 3 from plan)
   const fetchAllData = useCallback(async () => {
-    if (!account || !components || !account.address) {
-      setFeedback("Error: Account address or components not available. Please connect wallet and ensure setup is complete.");
+    if (!account || !components || !account.address) { 
+      setFeedback("Error: Account address or Dojo components not available. Please connect wallet and ensure setup is complete.");
       return;
     }
 
@@ -273,7 +308,7 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
         const bankLayer = targetBank.layer;
         // console.log(`  Using Bank Layer ${bankLayer} for center distance constraint.`); // Redundant log line
 
-        // Filter using LAYERS, with specific adjustment for zones 8, 10, 11, 12
+        // Filter using LAYERS, with specific adjustment based on bank side
         const filteredLocations = availableGeneratedLocationsArray
           .filter(loc => {
             // Ensure location has a valid layer
@@ -282,17 +317,16 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
                 return false;
             }
             
-            // Apply layer constraint based on the zone number
-            const currentBankZoneIsSpecial = [8, 10, 11, 12].includes(bankZoneNumber);
-            const maxAllowedLayer = currentBankZoneIsSpecial ? bankLayer - 2 : bankLayer;
-            
-            if (currentBankZoneIsSpecial) {
-                 // Optional: Log if a location is filtered out due to the stricter rule
-                 // if (loc.layer === bankLayer || loc.layer === bankLayer - 1) {
-                 //    console.log(`    Zone ${bankZoneNumber}: Filtering out loc layer ${loc.layer} because max is ${maxAllowedLayer}`);
-                 // }
-            }
+            // --- MODIFIED FILTER LOGIC --- 
+            // Apply layer constraint based on the bank's SIDE
+            const bankSide = targetBank.side; // Get the side of the current bank being processed
+            const isEastOrWestBank = (bankSide === 1 || bankSide === 4); // Check if it's East (1) or West (4)
 
+            // Apply stricter filter (bankLayer - 2) for East/West banks, standard filter (bankLayer) otherwise.
+            const maxAllowedLayer = isEastOrWestBank ? bankLayer - 2 : bankLayer; // Flipped the condition results
+            // --- END MODIFIED FILTER LOGIC --- 
+            
+            // Apply the calculated max layer constraint
             return loc.layer <= maxAllowedLayer; 
           });
         
@@ -433,18 +467,105 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
     }
   }, [account, components]); // queryRealmCount, getMaxLayer, generateSettlementLocations, getBanksLocations, getSeasonPassAddress are stable utils
 
-  // Helper for zone labels in export
-  const getZoneLabelForExport = (zoneNum: number): string => {
-    if (zoneNum >= 1 && zoneNum <= 6) {
-        const sideLabels = ["Zone 1 (NE)", "Zone 2 (E)", "Zone 3 (SE)", "Zone 4 (SW)", "Zone 5 (W)", "Zone 6 (NW)"];
-        return sideLabels[zoneNum - 1];
-    } else if (zoneNum >= 7 && zoneNum <= 12) {
-        // Assuming banks are used in the order they appear in banksForExport for Zones 7-12
-        return `Zone ${zoneNum} (Bank ${zoneNum - 6})`; 
-    } else {
-        return `Zone ${zoneNum}`;
+  // Fetch season config for settling status
+  useEffect(() => {
+    try {
+      const config = configManager.getSeasonConfig();
+      if (config && typeof config.startSettlingAt !== 'undefined' && config.startSettlingAt !== null) {
+        setSettlingStartTimestamp(Number(config.startSettlingAt));
+      } else {
+        console.warn("BatchRealmsPerZoneScript: startSettlingAt not found in season config or is null/undefined.");
+        setSeasonConfigError("Could not retrieve settling start time from config.");
+        setSettlingStartTimestamp(null); // Ensure it's null if not found
+      }
+    } catch (e) {
+      console.error("BatchRealmsPerZoneScript: Error fetching season config:", e);
+      setSeasonConfigError("Error fetching season config for status light.");
+      setSettlingStartTimestamp(null);
     }
-  };
+  }, []);
+
+  // Interval to update block timestamp and settling status using specific RpcProvider
+  useEffect(() => {
+    if (!rpcProvider) {
+      console.log("BatchRealmsPerZoneScript: [Polling Effect] RpcProvider not available (missing URL?).");
+      setSeasonConfigError("RPC provider not configured");
+      setIsSettlingActive(false);
+      setLatestBlockTimestamp(null);
+      return;
+    }
+    if (settlingStartTimestamp === null) {
+      console.log("BatchRealmsPerZoneScript: [Polling Effect] Settling start timestamp not set.");
+      setIsSettlingActive(false);
+      setLatestBlockTimestamp(null); 
+      return;
+    }
+    
+    console.log("BatchRealmsPerZoneScript: [Polling Effect] RPC Provider and start time available. Setting up interval.");
+    let isMounted = true;
+
+    const fetchAndUpdateStatus = async () => {
+      if (!isMounted) return; 
+      console.log("BatchRealmsPerZoneScript: [Interval] Attempting to fetch latest block via RpcProvider...");
+      try {
+        // Use the manually created rpcProvider
+        const block = await rpcProvider.getBlock('latest'); 
+        if (!isMounted) return;
+        console.log("BatchRealmsPerZoneScript: [Interval] Fetched block:", block);
+        const currentChainTimestamp = block.timestamp;
+        console.log("BatchRealmsPerZoneScript: [Interval] Current chain timestamp:", currentChainTimestamp);
+        setLatestBlockTimestamp(currentChainTimestamp);
+
+        const isActive = currentChainTimestamp >= settlingStartTimestamp;
+        setIsSettlingActive(isActive);
+        console.log(`BatchRealmsPerZoneScript: [Interval] Settling active? ${isActive} (Chain: ${currentChainTimestamp}, Start: ${settlingStartTimestamp})`);
+         
+      } catch (err) {
+        if (!isMounted) return;
+        console.error("BatchRealmsPerZoneScript: [Interval] Error fetching latest block timestamp via RpcProvider:", err);
+        setSeasonConfigError("Failed to fetch block time");
+        setIsSettlingActive(false);
+        const clientNow = Math.floor(Date.now()/1000);
+        setLatestBlockTimestamp(clientNow); 
+        console.log("BatchRealmsPerZoneScript: [Interval] Error fetching block time, falling back to client time for display:", clientNow);
+      }
+    };
+
+    fetchAndUpdateStatus(); 
+    const intervalId = setInterval(fetchAndUpdateStatus, 5000); 
+
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+      console.log("BatchRealmsPerZoneScript: [Polling Effect] Interval cleared.");
+    };
+  // Rerun this effect only if the provider instance or settling time changes
+  // Since rpcProvider is memoized with [], it won't cause re-runs unless env URL changed, which is unlikely.
+  }, [rpcProvider, settlingStartTimestamp]); 
+
+  // Effect for pulsing the light (red or green)
+  useEffect(() => {
+    let animationFrameId: number | null = null;
+    if (settlingStartTimestamp !== null) { // Pulse if timestamp is known
+      const pulse = (timestamp: number) => {
+        const minOpacity = 0.6;
+        const maxOpacity = 1.0;
+        const range = maxOpacity - minOpacity;
+        const cycle = (Math.sin(timestamp / 500) + 1) / 2; 
+        setPulseOpacity(minOpacity + cycle * range);
+        animationFrameId = requestAnimationFrame(pulse);
+      };
+      animationFrameId = requestAnimationFrame(pulse);
+    } else {
+      setPulseOpacity(1); 
+      // No need to cancel frame here, as it wouldn't have started
+    }
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [settlingStartTimestamp]);
 
   const handleExportMapData = useCallback(() => {
     if (!allLocationsMap || !banksForExport || !occupiedLocationsForExport || allZoneLocations.length === 0 || maxLayers === null) {
@@ -500,7 +621,7 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
       allPotentialSpots: allPotentialSpots, 
       zones: allZoneLocations.map((zoneData: SettlementLocation[], index: number) => ({
         zoneId: index + 1,
-        name: getZoneLabelForExport(index + 1),
+        name: `Zone ${index + 1}`,
         locations: zoneData.map((loc: SettlementLocation) => {
           const normalized = normalizeCoords(loc.contractX, loc.contractY);
           return {
@@ -701,7 +822,7 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
   // TODO: Implement handleSettleRealms function (Step 6 from plan)
   const handleSettleRealms = async () => {
      if (!account || !create_multiple_realms) {
-      setFeedback('Error: Account or system call not available.');
+      setFeedback('Error: Account or system call (create_multiple_realms) not available.');
       return;
     }
     if (!jsonDataOutput) {
@@ -751,50 +872,79 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
   // Styles (can be reused or defined in a common place)
   const commonStyles = {
     textArea: { width: '100%', minHeight: '200px', marginTop: '10px', padding: '8px', border: '1px solid #777', borderRadius: '4px', backgroundColor: '#333', color: 'white', fontFamily: 'monospace', fontSize: '0.9em', boxSizing: 'border-box' as const },
-    button: { padding: '10px 15px', marginTop: '10px', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '1em' as const },
+    button: { padding: '10px 15px', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '1em' as const },
     feedback: { marginTop: '10px', padding: '8px', color: 'white', borderRadius: '4px', fontSize: '0.9em' as const, whiteSpace: 'pre-wrap' as const },
-    select: { padding: '8px', marginTop: '10px', marginRight: '10px', borderRadius: '4px', backgroundColor: '#333', color: 'white', border: '1px solid #777' }
+    select: { padding: '8px', marginTop: '10px', marginRight: '10px', borderRadius: '4px', backgroundColor: '#333', border: '1px solid #777' },
+    light: {
+      width: '18px',
+      height: '18px',
+      borderRadius: '50%',
+      marginRight: '10px',
+      border: '1px solid #444',
+    },
+    controlsContainer: { display: 'flex', alignItems: 'center', flexWrap: 'wrap' as const },
+    buttonRowContainer: { display: 'flex', alignItems: 'center', flexWrap: 'wrap' as const, marginTop: '10px' },
+    settleControlsContainer: { display: 'flex', alignItems: 'center', flexWrap: 'wrap' as const, marginTop: '20px' }
   };
+
+  const lightColor = settlingStartTimestamp === null ? '#FFA500' : (isSettlingActive ? '#4CAF50' : '#F44336');
 
   return (
     <div style={{paddingBottom: '20px'}}>
       <h4>Settle Realms Per Zone</h4>
+
       <p style={{ fontSize: '0.85em', marginBottom: '10px' }}>
-        1. Fetch zone and season pass data. 2. Select a zone. 3. Review JSON. 4. Settle.
+        1. Fetch zone and season pass data. 2. Select a zone. 
+        <br /> 
+        3. Review JSON. 4. Settle.
       </p>
       
-      <button
-        style={{ ...commonStyles.button, backgroundColor: '#007bff', opacity: isLoading ? 0.7 : 1 }}
-        onClick={fetchAllData}
-        disabled={isLoading}
-      >
-        {isLoading && feedback.startsWith("Fetching") ? 'Fetching Data...' : '1. Fetch location and zones data'}
-      </button>
+      {/* Container for Fetch and Export Buttons */}
+      <div style={commonStyles.buttonRowContainer}>
+        <button
+          style={{ ...commonStyles.button, backgroundColor: '#007bff', opacity: isLoading ? 0.7 : 1, /*marginTop: '10px' REMOVED */ }}
+          onClick={fetchAllData}
+          disabled={isLoading}
+        >
+          {isLoading && feedback.startsWith("Fetching") ? 'Fetching Data...' : '1. Fetch locations'}
+        </button>
 
-      <div>
-        <label htmlFor="zoneSelect" style={{ marginRight: '5px' }}>Select Zone:</label>
-        <select 
+        <button
+          style={{ ...commonStyles.button, backgroundColor: '#17a2b8', marginLeft: '10px' /*, marginTop: '10px' REMOVED */ }}
+          onClick={handleExportMapData}
+          disabled={isLoading || allZoneLocations.length === 0}
+        >
+          Export Map Data
+        </button>
+      </div>
+
+      {/* Container for Zone Selector - Now separate */}
+      <div style={{ marginTop: '10px' }}> 
+        <label htmlFor="zoneSelect" style={{ marginRight: '5px' }}>2. Select Zone:</label>
+        <select
             id="zoneSelect"
-            style={commonStyles.select}
-            value={selectedZoneId} 
+            style={{ 
+              ...commonStyles.select, 
+              color: ZONE_COLORS[selectedZoneId] || 'white' // Dynamically set text color
+            }}
+            value={selectedZoneId}
             onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSelectedZoneId(Number(e.target.value))}
             disabled={isLoading || allZoneLocations.length === 0}
         >
           {Array.from({ length: 12 }, (_, i) => i + 1).map(zoneNum => (
-            <option key={zoneNum} value={zoneNum}>{getZoneLabelForExport(zoneNum)}</option>
+            <option 
+              key={zoneNum} 
+              value={zoneNum} 
+              // Apply color style to option text
+              style={{ color: ZONE_COLORS[zoneNum] || 'white' }} 
+            >
+              {`Zone ${zoneNum}`}
+            </option>
           ))}
         </select>
       </div>
 
-      {/* Add Export Button Here */}
-      <button
-        style={{ ...commonStyles.button, backgroundColor: '#17a2b8', marginLeft: '10px' }}
-        onClick={handleExportMapData}
-        disabled={isLoading || allZoneLocations.length === 0}
-      >
-        Export Map Data
-      </button>
-
+      {/* Feedback Display */}
       {feedback && (
         <div style={{ ...commonStyles.feedback, backgroundColor: feedback.startsWith('Error:') || feedback.startsWith('Warning:') ? '#d9534f' : '#5bc0de' }}>
           {feedback}
@@ -808,13 +958,28 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
         placeholder={'JSON output for realm settlements will appear here after selecting a zone and fetching data...'}
       />
       
-      <button
-        style={{ ...commonStyles.button, backgroundColor: '#28a745', opacity: isLoading || !jsonDataOutput ? 0.7 : 1 }}
-        onClick={handleSettleRealms}
-        disabled={isLoading || !jsonDataOutput || playerSeasonPasses.length === 0}
-      >
-        {isLoading && feedback.startsWith("Settling") ? 'Settling...' : `4. Settle ${JSON.parse(jsonDataOutput || "[]").length} Realms for Zone ${selectedZoneId}`}
-      </button>
+      <div style={commonStyles.settleControlsContainer}>
+        <div style={{ 
+            ...commonStyles.light, 
+            backgroundColor: lightColor, 
+            opacity: settlingStartTimestamp !== null ? pulseOpacity : 1 
+        }}></div>
+
+        <button
+          style={{ ...commonStyles.button, backgroundColor: '#28a745', opacity: isLoading || !jsonDataOutput ? 0.7 : 1 }}
+          onClick={handleSettleRealms}
+          disabled={isLoading || !jsonDataOutput || playerSeasonPasses.length === 0 || !isSettlingActive || settlingStartTimestamp === null}
+        >
+          {isLoading && feedback.startsWith("Settling") ? 'Settling...' : `4. Settle ${JSON.parse(jsonDataOutput || "[]").length} Realms for Zone ${selectedZoneId}`}
+        </button>
+
+        {/* Display latest fetched block timestamp */} 
+        {latestBlockTimestamp !== null && (
+          <span style={{fontSize: '0.7em', marginLeft: '10px', color: '#aaa'}}>
+            (Current block @ {latestBlockTimestamp} - Settling @ {settlingStartTimestamp})
+          </span>
+        )}
+      </div>
     </div>
   );
 }; 
