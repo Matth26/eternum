@@ -844,7 +844,8 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
     }
 
     setIsLoading(true);
-    setFeedback(`Settling ${parsedData.length} realms for Zone ${selectedZoneId}...`);
+    // Updated initial feedback
+    setFeedback(`Preparing to settle ${parsedData.length} realms for Zone ${selectedZoneId}...`);
 
     try {
       if (!env || !env.VITE_PUBLIC_CLIENT_FEE_RECIPIENT) {
@@ -852,18 +853,25 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
       }
       const seasonPassAddress = await getSeasonPassAddress(); // Get dynamically
 
-      await create_multiple_realms({
-        realms: parsedData, // This is RealmBatchSettleTransferObjects[], need to match the type.
-                            // RealmSettlementInput seems compatible with RealmBatchSettleObject.
-        owner: account.address,
-        frontend: env.VITE_PUBLIC_CLIENT_FEE_RECIPIENT,
-        signer: account, // This should be account itself, not just account.address
-        season_pass_address: seasonPassAddress, 
-      });
-      setFeedback(`Successfully initiated settlement for ${parsedData.length} realm(s) in Zone ${selectedZoneId}.`);
+      let settledCount = 0;
+      for (const [index, realmInput] of parsedData.entries()) {
+        // Update feedback for each realm
+        setFeedback(`Settling realm ${realmInput.realm_id} (${index + 1}/${parsedData.length}) in Zone ${selectedZoneId}...`);
+        await create_multiple_realms({
+          realms: [realmInput], // Pass a single realm object in an array
+          owner: account.address,
+          frontend: env.VITE_PUBLIC_CLIENT_FEE_RECIPIENT,
+          signer: account, 
+          season_pass_address: seasonPassAddress, 
+        });
+        settledCount++;
+      }
+      // Updated success feedback
+      setFeedback(`Successfully settled ${settledCount} of ${parsedData.length} realm(s) in Zone ${selectedZoneId}.`);
     } catch (error) {
       console.error("Error settling realms:", error);
-      setFeedback(`Error settling realms: ${(error as Error).message}`);
+      // The feedback will show the error that stopped the process
+      setFeedback(`Error during settlement: ${(error as Error).message}`);
     } finally {
       setIsLoading(false);
     }
