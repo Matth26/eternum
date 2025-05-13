@@ -55,12 +55,12 @@ function SeasonPasses() {
                 address /*, ITEMS_PER_PAGE, (currentPage - 1) * ITEMS_PER_PAGE*/,
               )
             : null,
-        refetchInterval: 15_000,
+        refetchInterval: 8_000,
       },
     ],
   });
 
-  const getSeasonPassMetadataString = useCallback((pass: MergedNftData): string | null => {
+  const getSeasonPassMetadataString = useCallback((pass: MergedNftData) => {
     if (pass?.metadata) {
       return pass.metadata;
     }

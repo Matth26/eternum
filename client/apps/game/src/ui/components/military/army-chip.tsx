@@ -5,13 +5,14 @@ import { TroopChip } from "@/ui/components/military/troop-chip";
 import { InventoryResources } from "@/ui/components/resources/inventory-resources";
 import { ArmyCapacity } from "@/ui/elements/army-capacity";
 import Button from "@/ui/elements/button";
+import CircleButton from "@/ui/elements/circle-button";
 import { StaminaResource } from "@/ui/elements/stamina-resource";
 import { ViewOnMapIcon } from "@/ui/elements/view-on-map-icon";
 import { HelpModal } from "@/ui/modules/military/help-modal";
 import { getBlockTimestamp } from "@/utils/timestamp";
 import { armyHasTroops, getEntityIdFromKeys, StaminaManager } from "@bibliothecadao/eternum";
 import { useDojo, useQuery } from "@bibliothecadao/react";
-import { ArmyInfo, TroopType } from "@bibliothecadao/types";
+import { ArmyInfo, TroopTier, TroopType } from "@bibliothecadao/types";
 import { useComponentValue } from "@dojoengine/react";
 import { ArrowLeftRight, CirclePlus, LucideArrowRight } from "lucide-react";
 import React, { useCallback, useMemo, useState } from "react";
@@ -32,9 +33,10 @@ export const NavigateToPositionIcon = ({
   const setNavigationTarget = useUIStore((state) => state.setNavigationTarget);
 
   return (
-    <img
-      src="/image-icons/compass.png"
-      className={`w-5 h-5 fill-gold hover:fill-gold/50 transition-all duration-300 ${className}`}
+    <CircleButton
+      image="/image-icons/compass.png"
+      size="md"
+      className={` fill-gold hover:fill-gold/50 transition-all duration-300 ${className}`}
       onClick={() => {
         const { x, y } = position.getNormalized();
         setNavigationTarget({
@@ -90,7 +92,7 @@ export const ArmyChip = ({
 
   const maxStamina = useMemo(() => {
     if (!army.troops) return 0;
-    return StaminaManager.getMaxStamina(army.troops.category as TroopType);
+    return StaminaManager.getMaxStamina(army.troops.category as TroopType, army.troops.tier as TroopTier);
   }, [army.troops]);
 
   const onTroopSwap = useCallback(() => {

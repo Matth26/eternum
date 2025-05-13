@@ -51,10 +51,11 @@ function SeasonPasses() {
         queryKey: ["openOrdersByPrice", marketplaceAddress],
         queryFn: () =>
           fetchOpenOrdersByPrice(seasonPassAddress, undefined, ITEMS_PER_PAGE, (currentPage - 1) * ITEMS_PER_PAGE),
+        refetchInterval: 8_000,
       },
       {
-        queryKey: ["activeMarketOrdersTotal"],
-        queryFn: () => fetchActiveMarketOrdersTotal(),
+        queryKey: ["activeMarketOrdersTotal", seasonPassAddress],
+        queryFn: () => fetchActiveMarketOrdersTotal(seasonPassAddress),
         refetchInterval: 30_000,
       },
     ],
@@ -62,7 +63,7 @@ function SeasonPasses() {
 
   //const mySeasonPassNfts: TokenBalanceEdge[] = useMemo(() => getSeasonPassNfts(myNftsQuery.data), [myNftsQuery.data]);
 
-  const getSeasonPassMetadataString = useCallback((pass: OpenOrderByPrice): string | null => {
+  const getSeasonPassMetadataString = useCallback((pass: OpenOrderByPrice) => {
     if (pass?.metadata) {
       return pass.metadata;
     }
@@ -351,7 +352,7 @@ function SeasonPasses() {
                       {/* Selected Pass Images */}
                       <div className="flex -space-x-2">
                         {selectedPasses.slice(0, 3).map((pass) => {
-                          const metadata = pass.metadata ? JSON.parse(pass.metadata) : null;
+                          const metadata = pass.metadata;
                           const image = metadata?.image;
                           return (
                             <div
@@ -371,7 +372,7 @@ function SeasonPasses() {
                       )}
                     </div>
                   ) : (
-                    <div className="flex items-center gap-4 w-52 -mt-3">
+                    <div className="flex items-center gap-4 w-32 sm:w-52 -mt-3">
                       <div className="flex-1">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-xs font-medium">Sweep Selection</span>
@@ -394,7 +395,7 @@ function SeasonPasses() {
                   </Button>
                 </div>
                 <div className="flex items-center gap-4">
-                  <div className="font-semibold">
+                  <div className="hidden sm:block font-semibold">
                     {getTotalPrice()} Lords{" "}
                     <span className="text-xs text-muted-foreground">
                       (Max Price:{" "}

@@ -1,4 +1,5 @@
 import { trimAddress } from "@/lib/utils";
+import { RealmMetadata } from "@/types";
 import { ContractAddress, HexPosition, ID } from "@bibliothecadao/types";
 import { env } from "../../../env";
 
@@ -9,6 +10,20 @@ const QUERIES = {
   REALM_SETTLEMENTS: "SELECT `base.coord_x`, `base.coord_y`, owner FROM [s1_eternum-Structure] WHERE category == 1;",
   REALM_VILLAGE_SLOTS:
     "SELECT `connected_realm_coord.x`, `connected_realm_coord.y`, connected_realm_entity_id, connected_realm_id, directions_left FROM `s1_eternum-StructureVillageSlots`",
+  ACTIVE_MARKET_ORDERS: `
+    SELECT 
+      mo.order_id AS order_id,
+      mo."order.token_id" AS token_id, 
+      mo."order.price" AS price,
+      mo."order.owner" AS owner,
+      mo."order.expiration" AS expiration,
+      mo."order.collection_id" AS collection_id
+    FROM "marketplace-MarketOrderModel" AS mo
+    WHERE mo."active" = 1
+      AND mo."collection_id" = 1  
+      AND mo."token_id" = '{tokenId}'
+    ORDER BY mo."price" ASC
+  `,
   TOKEN_TRANSFERS: `
     WITH token_meta AS ( 
         SELECT contract_address,
@@ -51,9 +66,18 @@ const QUERIES = {
     /* ❶ ----------------------------------------------------------------------- */
     total_active AS (
         SELECT COUNT(*) AS active_order_count
-        FROM   "marketplace-MarketOrderModel"
-        WHERE  "order.active" = 1
-    ),
+        FROM   "marketplace-MarketOrderModel" AS mo
+         JOIN   token_balances tb
+           ON  tb.contract_address = "{contractAddress}"
+           AND substr(tb.token_id, instr(tb.token_id, ':') + 1) = printf("0x%064x", mo."order.token_id")
+           /* normalise both addresses before comparing ---------- */
+           AND ltrim(lower(replace(mo."order.owner" , "0x","")), "0")
+               = ltrim(lower(replace(tb.account_address, "0x","")), "0")
+           AND tb.balance != "0x0000000000000000000000000000000000000000000000000000000000000000"
+   
+        WHERE  mo."order.active" = 1
+        AND    mo."order.expiration" > strftime('%s','now')
+        ),
 
     /* ❷ ----------------------------------------------------------------------- */
     accepted AS (                           -- only "Accepted" events
@@ -144,7 +168,8 @@ WITH limited_active_orders AS (
     LEFT JOIN (SELECT token_id, name, symbol, contract_address, MAX(metadata) AS metadata FROM tokens GROUP BY token_id) t
       ON t.token_id = substr(lao.token_id, instr(lao.token_id, ':') + 1)
         AND t.contract_address = "{contractAddress}"
-    ORDER BY lao.price_hex IS NULL, lao.price_hex;
+    ORDER BY lao.price_hex IS NULL, lao.price_hex 
+
   `,
   SEASON_PASS_REALMS_BY_ADDRESS: `
     SELECT substr(r.token_id, instr(r.token_id, ':') + 1) AS token_id,
@@ -243,7 +268,7 @@ export interface OpenOrderByPrice {
   order_id: number;
   name: string | null;
   symbol: string | null;
-  metadata: string | null;
+  metadata: RealmMetadata | null;
   best_price_hex: bigint | null;
   expiration: number | null;
   token_owner: string | null;
@@ -332,8 +357,10 @@ export async function fetchTokenTransfers(contractAddress: string, recipientAddr
 /**
  * Fetch totals for active market orders from the API
  */
-export async function fetchActiveMarketOrdersTotal(): Promise<ActiveMarketOrdersTotal[]> {
-  const url = `${API_BASE_URL}?query=${encodeURIComponent(QUERIES.ACTIVE_MARKET_ORDERS_TOTAL)}`;
+export async function fetchActiveMarketOrdersTotal(contractAddress: string): Promise<ActiveMarketOrdersTotal[]> {
+  const url = `${API_BASE_URL}?query=${encodeURIComponent(
+    QUERIES.ACTIVE_MARKET_ORDERS_TOTAL.replaceAll("{contractAddress}", contractAddress),
+  )}`;
   const response = await fetch(url);
 
   if (!response.ok) {
@@ -389,6 +416,7 @@ export async function fetchOpenOrdersByPrice(
     best_price_hex: item.price_hex ? BigInt(item.price_hex) : null,
     token_owner: item.token_owner?.toString() ?? null,
     order_owner: item.order_owner?.toString() ?? null,
+    metadata: item.metadata ? JSON.parse(item.metadata) : null,
   }));
 }
 
@@ -423,7 +451,32 @@ export interface TokenBalanceWithToken {
   symbol: string | null;
   expiration: number | null;
   best_price_hex: bigint | null;
-  metadata: string | null;
+  metadata: RealmMetadata | null;
+}
+
+export interface ActiveMarketOrder {
+  order_id: string;
+  token_id: string;
+  price: string;
+  owner: string;
+  expiration: number;
+  collection_id: number;
+}
+
+export async function fetchActiveMarketOrders(contractAddress: string, tokenId: string): Promise<ActiveMarketOrder[]> {
+  const query = QUERIES.ACTIVE_MARKET_ORDERS.replace("{contractAddress}", contractAddress).replace(
+    "{tokenId}",
+    tokenId,
+  );
+
+  const url = `${API_BASE_URL}?query=${encodeURIComponent(query)}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch active market orders: ${response.statusText}`);
+  }
+
+  return await response.json();
 }
 
 export async function fetchTokenBalancesWithMetadata(
@@ -433,16 +486,19 @@ export async function fetchTokenBalancesWithMetadata(
   const query = QUERIES.TOKEN_BALANCES_WITH_METADATA.replaceAll("{contractAddress}", contractAddress)
     .replace("{accountAddress}", accountAddress)
     .replace("{trimmedAccountAddress}", trimAddress(accountAddress));
-  console.log(query);
+
   const url = `${API_BASE_URL}?query=${encodeURIComponent(query)}`;
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch token balances with tokens: ${response.statusText}`);
   }
   const rawData = await response.json();
-  return rawData.map((item: TokenBalanceWithToken) => ({
-    ...item,
-    token_id: parseInt(item.token_id?.split(":")[1] ?? "0", 16),
-    best_price_hex: item.best_price_hex ? BigInt(item.best_price_hex) : null,
-  }));
+  return rawData.map(
+    (item: { token_id: string; best_price_hex: string | number | bigint | boolean; metadata: string }) => ({
+      ...item,
+      token_id: parseInt(item.token_id?.split(":")[1] ?? "0", 16),
+      best_price_hex: item.best_price_hex ? BigInt(item.best_price_hex) : null,
+      metadata: item.metadata ? JSON.parse(item.metadata) : null,
+    }),
+  );
 }
