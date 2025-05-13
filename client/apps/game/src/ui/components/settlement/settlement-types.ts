@@ -6,6 +6,7 @@ export interface SettlementLocation {
   x: number;
   y: number;
   isMine?: boolean;
+  ownerAddress?: string;
 }
 
 // Map view state interface

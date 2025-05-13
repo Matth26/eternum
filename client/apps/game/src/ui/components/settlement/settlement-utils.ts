@@ -119,6 +119,7 @@ export const getOccupiedLocations = async (
     const realmPositions = settlements.map((entity) => {
       const x = entity["base.coord_x"];
       const y = entity["base.coord_y"];
+      const owner = entity.owner.toString();
 
       // Use the improved reverse calculation function
       const location = locations_map.get(`${x},${y}`);
@@ -131,7 +132,8 @@ export const getOccupiedLocations = async (
         point: location.point,
         x,
         y,
-        isMine: BigInt(entity.owner) === BigInt(playerAddress),
+        ownerAddress: owner,
+        isMine: BigInt(owner) === BigInt(playerAddress),
       } as SettlementLocation;
     });
 

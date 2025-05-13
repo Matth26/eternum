@@ -8,7 +8,7 @@ import {
 } from "@/ui/components/settlement/settlement-utils";
 import { getSeasonPassAddress } from "@/utils/addresses"; // For season pass contract address
 import { getMaxLayer } from "@/utils/settlement";
-import { calculateDistance, configManager, getOffchainRealm } from "@bibliothecadao/eternum";
+import { calculateDistance, configManager, getAddressName, getOffchainRealm } from "@bibliothecadao/eternum";
 import { useDojo } from "@bibliothecadao/react";
 import { ContractAddress, getNeighborHexes } from "@bibliothecadao/types"; // For neighbor calculation
 import { gql } from "graphql-request"; // For season pass fetching
@@ -40,6 +40,8 @@ interface SettlementLocation {
   y: number; // Human-readable Y (normalized)
   contractX: number;
   contractY: number;
+  ownerAddress?: string; // Added for occupied spots
+  ownerName?: string;    // Added for occupied spots
   // minDistanceToBank?: number; // From GetAllLocationsScript, may not be needed directly here
 }
 
@@ -138,10 +140,6 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
   const [maxLayers, setMaxLayersState] = useState<number | null>(null);
   const [allLocationsMap, setAllLocationsMap] = useState<Map<string, SettlementLocation> | null>(null);
 
-  // New state for map export
-  const [banksForExport, setBanksForExport] = useState<SettlementLocation[] | null>(null);
-  const [occupiedLocationsForExport, setOccupiedLocationsForExport] = useState<{x: number, y: number}[] | null>(null);
-
   // State for settling status light
   const [settlingStartTimestamp, setSettlingStartTimestamp] = useState<number | null>(null);
   const [latestBlockTimestamp, setLatestBlockTimestamp] = useState<number | null>(null);
@@ -206,10 +204,24 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
 
       // ----> Filter out occupied locations <----
       console.log("fetchAllData: Fetching occupied locations...");
-      const occupiedLocations = await getOccupiedLocations(ContractAddress(account.address), components, generatedLocationsMap);
-      const occupiedCoords = new Set(occupiedLocations.map(loc => `${loc.x},${loc.y}`)); 
+      const occupiedLocationsResult = await getOccupiedLocations(ContractAddress(account.address), components, generatedLocationsMap);
+      
+      const occupiedLocationsWithOwnerData = occupiedLocationsResult.map(loc => {
+        const ownerAddress = loc.ownerAddress; // Assuming getOccupiedLocations will be updated to return this
+        let ownerName = undefined;
+        if (ownerAddress && components) {
+          ownerName = getAddressName(ContractAddress(ownerAddress), components);
+        }
+        return {
+          x: loc.x, // These are contractX from getOccupiedLocations
+          y: loc.y, // These are contractY from getOccupiedLocations
+          ownerAddress,
+          ownerName
+        };
+      });
+
+      const occupiedCoords = new Set(occupiedLocationsWithOwnerData.map(loc => `${loc.x},${loc.y}`)); 
       console.log(`fetchAllData: Found ${occupiedCoords.size} occupied locations.`);
-      setOccupiedLocationsForExport(occupiedLocations.map(loc => ({ x: loc.x, y: loc.y }))); // Store for export
 
       const availableGeneratedLocationsArray = allGeneratedLocationsArray.filter(loc => 
         !occupiedCoords.has(`${loc.contractX},${loc.contractY}`)
@@ -247,7 +259,6 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
       // Log allBanks details
       console.log(`fetchAllData: allBanks count: ${allBanks.length}`);
       console.log(`fetchAllData: allBanks content (first 3 coordinates):`, allBanks.slice(0,3).map(b => ({x: b.contractX, y: b.contractY })));
-      setBanksForExport(allBanks); // Store for export
 
       // Determine the target banks for Zones 7-12
       const targetBanksForZones7to12 = allBanks.slice(0, 6); // Use first 6 banks
@@ -567,87 +578,6 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
     };
   }, [settlingStartTimestamp]);
 
-  const handleExportMapData = useCallback(() => {
-    if (!allLocationsMap || !banksForExport || !occupiedLocationsForExport || allZoneLocations.length === 0 || maxLayers === null) {
-      setFeedback("Error: Please fetch data first (ensure all map data including maxLayers is available) before exporting.");
-      return;
-    }
-
-    setFeedback("Preparing map data for JSON export...");
-
-    const normalizeCoords = (contractX: number, contractY: number) => {
-      const pos = new PositionFromTypes({ x: contractX, y: contractY });
-      return pos.getNormalized(); // Returns {x, y}
-    };
-
-    const allPotentialSpots = Array.from(allLocationsMap.values() as Iterable<SettlementLocation>).map((loc: SettlementLocation) => {
-      const normalized = normalizeCoords(loc.contractX, loc.contractY);
-      return {
-        normalizedX: normalized.x,
-        normalizedY: normalized.y,
-        originalContractX: loc.contractX, // Keep originals for reference if needed
-        originalContractY: loc.contractY,
-        side: loc.side,
-        layer: loc.layer,
-        point: loc.point,
-      };
-    });
-
-    const mapData = {
-      maxLayers: maxLayers,
-      center: normalizeCoords(0,0), // Normalize center as well
-      banks: banksForExport.map((b: SettlementLocation) => {
-        const normalized = normalizeCoords(b.contractX, b.contractY);
-        return {
-          normalizedX: normalized.x,
-          normalizedY: normalized.y,
-          originalContractX: b.contractX,
-          originalContractY: b.contractY,
-          side: b.side, 
-          layer: b.layer, 
-          point: b.point 
-        };
-      }),
-      occupiedContractSpots: occupiedLocationsForExport.map((occ: {x: number, y: number}) => {
-        // occupiedLocationsForExport already stores contractX/Y as x/y directly
-        const normalized = normalizeCoords(occ.x, occ.y);
-        return {
-          normalizedX: normalized.x,
-          normalizedY: normalized.y,
-          originalContractX: occ.x,
-          originalContractY: occ.y,
-        };
-      }), 
-      allPotentialSpots: allPotentialSpots, 
-      zones: allZoneLocations.map((zoneData: SettlementLocation[], index: number) => ({
-        zoneId: index + 1,
-        name: `Zone ${index + 1}`,
-        locations: zoneData.map((loc: SettlementLocation) => {
-          const normalized = normalizeCoords(loc.contractX, loc.contractY);
-          return {
-            normalizedX: normalized.x,
-            normalizedY: normalized.y,
-            originalContractX: loc.contractX,
-            originalContractY: loc.contractY,
-            side: loc.side,
-            layer: loc.layer,
-            point: loc.point,
-          };
-        }),
-      })),
-    };
-
-    const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(
-      JSON.stringify(mapData, null, 2)
-    )}`;
-    const link = document.createElement("a");
-    link.href = jsonString;
-    link.download = "eternum_settlement_map_data.json"; // More descriptive name
-    link.click();
-    setFeedback("Map data JSON download initiated.");
-
-  }, [allLocationsMap, banksForExport, occupiedLocationsForExport, allZoneLocations, maxLayers]);
-
   // TODO: Implement countPotentialNeighbors function (Step 4 from plan)
   const countPotentialNeighbors = useCallback((
     location: SettlementLocation,
@@ -916,14 +846,6 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
         >
           {isLoading && feedback.startsWith("Fetching") ? 'Fetching Data...' : '1. Fetch locations'}
         </button>
-
-        <button
-          style={{ ...commonStyles.button, backgroundColor: '#17a2b8', marginLeft: '10px' /*, marginTop: '10px' REMOVED */ }}
-          onClick={handleExportMapData}
-          disabled={isLoading || allZoneLocations.length === 0}
-        >
-          Export Map Data
-        </button>
       </div>
 
       {/* Container for Zone Selector - Now separate */}
@@ -962,7 +884,7 @@ export const BatchRealmsPerZoneScript: React.FC = () => {
       <textarea
         style={commonStyles.textArea}
         value={jsonDataOutput}
-        readOnly
+        onChange={(e) => setJsonDataOutput(e.target.value)}
         placeholder={'JSON output for realm settlements will appear here after selecting a zone and fetching data...'}
       />
       
