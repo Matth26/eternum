@@ -2,8 +2,7 @@ import { getBlockTimestamp } from '@/utils/timestamp';
 import {
   configManager,
   divideByPrecision,
-  getBalance,
-  multiplyByPrecision,
+  getBalance
 } from '@bibliothecadao/eternum';
 import { useDojo } from '@bibliothecadao/react';
 import { ID, ResourcesIds, StructureType } from '@bibliothecadao/types'; // Corrected import path
@@ -71,6 +70,9 @@ export const AutoResourceProducerScript: React.FC = () => {
 
   const productionIntervalMs = productionIntervalMins * 60 * 1000;
 
+  // Ref to track the previous state of isRunning to control specific log messages
+  const prevIsRunningRef = useRef(isRunning);
+
   const log = useCallback((message: string, type: LogEntry['type'] = 'info', realmId?: ID) => {
     console.log(`[AutoProducer] ${realmId ? `(Realm ${realmId}) ` : ''}${message}`);
     setLogs((prevLogs: LogEntry[]) => {
@@ -109,226 +111,239 @@ export const AutoResourceProducerScript: React.FC = () => {
     log('Starting auto production cycle with current settings...');
 
     try {
+      // --- Phase 1: Data Collection & Preparation (All Realms) ---
+      log('Phase 1: Collecting data and preparing operations for all realms...', 'info');
+      const allRealmOperations: Array<{
+        realmId: ID;
+        realmName: string;
+        laborProdArgs: { types: ResourcesIds[], amounts: number[] } | null;
+        rawReplenishArgs: { types: ResourcesIds[], cycles: number[] } | null;
+        laborReplenishArgs: { types: ResourcesIds[], cycles: number[], laborBudgetPerType: number } | null;
+      }> = [];
+      
       const ownedRealms = await getMyOwnedRealms();
       if (stopCycleRef.current) {
-        log('Production cycle stopped by user before processing realms.', 'info');
-        return;
+        log('Production cycle stopped by user during realm discovery.', 'info');
+        setIsLoading(false); return;
       }
       if (ownedRealms.length === 0) {
         log('No owned realms found.');
-        return;
+        setIsLoading(false); return;
       }
-
       const { currentDefaultTick } = getBlockTimestamp();
 
+      // Define resourcesToConsiderForLaborBurn once, before the loop
+      const resourcesToConsiderForLaborBurn = Object.values(ResourcesIds).filter(
+            (id) => typeof id === 'number' && 
+                    id !== ResourcesIds.Lords && 
+                    id !== ResourcesIds.Labor && 
+                    id !== ResourcesIds.AncientFragment &&
+                    id !== ResourcesIds.Donkey &&
+                    id !== ResourcesIds.Knight &&
+                    id !== ResourcesIds.KnightT2 &&
+                    id !== ResourcesIds.KnightT3 &&
+                    id !== ResourcesIds.Crossbowman &&
+                    id !== ResourcesIds.CrossbowmanT2 &&
+                    id !== ResourcesIds.CrossbowmanT3 &&
+                    id !== ResourcesIds.Paladin &&
+                    id !== ResourcesIds.PaladinT2 &&
+                    id !== ResourcesIds.PaladinT3 &&
+                    id !== ResourcesIds.Wheat &&
+                    id !== ResourcesIds.Fish &&
+                    !isNaN(id)
+        ) as ResourcesIds[];
+
+      log(`Phase 1: Starting data collection for ${ownedRealms.length} realms...`, 'info');
+      let realmCollectCount = 0;
       for (const realm of ownedRealms) {
+        realmCollectCount++;
         if (stopCycleRef.current) {
-          log('Production cycle stopped by user during realm iteration.', 'info', realm.entityId);
-          break; // Exit realm loop
+          log('Data collection stopped by user during realm iteration.', 'info', realm.entityId);
+          break;
         }
         const realmId = realm.entityId;
-        log(`Processing Realm ID: ${realmId}`, 'info', realmId);
-        const burnedForLaborList: ResourcesIds[] = []; // Track resources burned for labor in this realm
+        log(`Collecting data for Realm ID: ${realmId} (${realm.name}) (Realm ${realmCollectCount} of ${ownedRealms.length})`, 'info', realmId);
 
-        try {
-          // Part 1: Produce Labor by burning specified resources
-          log(`Phase 1: Producing Labor from raw resources using ${percentageForLaborInput * 100}%.`, 'info', realmId);
-          const resourcesToConsiderForLaborBurn = Object.values(ResourcesIds).filter(
-              (id) => typeof id === 'number' && 
-                      id !== ResourcesIds.Lords && 
-                      id !== ResourcesIds.Labor && 
-                      id !== ResourcesIds.AncientFragment &&
-                      id !== ResourcesIds.Donkey &&
-                      id !== ResourcesIds.Knight &&
-                      id !== ResourcesIds.KnightT2 &&
-                      id !== ResourcesIds.KnightT3 &&
-                      id !== ResourcesIds.Crossbowman &&
-                      id !== ResourcesIds.CrossbowmanT2 &&
-                      id !== ResourcesIds.CrossbowmanT3 &&
-                      id !== ResourcesIds.Paladin &&
-                      id !== ResourcesIds.PaladinT2 &&
-                      id !== ResourcesIds.PaladinT3 &&
-                      id !== ResourcesIds.Wheat &&
-                      id !== ResourcesIds.Fish &&
-                      !isNaN(id)
-          ) as ResourcesIds[];
+        const currentRealmLaborTypes: ResourcesIds[] = [];
+        const currentRealmLaborAmounts: number[] = [];
+        const currentRealmIntendedLaborBurnResources: ResourcesIds[] = [];
 
-          for (const resourceToBurnId of resourcesToConsiderForLaborBurn) {
-              if (stopCycleRef.current) {
-                log('Production cycle stopped by user during labor production phase.', 'info', realmId);
-                break; // Exit resource burn loop
-              }
-              const laborProductionConfig = configManager.getLaborConfig(resourceToBurnId);
-              
-              if (laborProductionConfig && laborProductionConfig.laborProductionPerResource > 0) {
-                  const resourceBalance = getBalance(realmId, resourceToBurnId, currentDefaultTick, components).balance;
-                  const resourceToBurnNat = Math.floor(divideByPrecision(resourceBalance) * percentageForLaborInput);
+        resourcesToConsiderForLaborBurn.forEach(resourceToBurnId => {
+            const laborProductionConfig = configManager.getLaborConfig(resourceToBurnId);
+            if (laborProductionConfig && laborProductionConfig.laborProductionPerResource > 0) {
+                const resourceBalance = getBalance(realmId, resourceToBurnId, currentDefaultTick, components).balance;
+                const resourceToBurnNat = Math.floor(divideByPrecision(resourceBalance) * percentageForLaborInput);
+                if (resourceToBurnNat > 0) {
+                    currentRealmLaborTypes.push(resourceToBurnId);
+                    currentRealmLaborAmounts.push(resourceToBurnNat);
+                    if (!currentRealmIntendedLaborBurnResources.includes(resourceToBurnId)) {
+                         currentRealmIntendedLaborBurnResources.push(resourceToBurnId);
+                    }
+                }
+            }
+        });
 
-                  if (resourceToBurnNat > 0) {
-                      try {
-                          log(`Attempting to burn ${resourceToBurnNat.toFixed(2)} of ${ResourcesIds[resourceToBurnId]} (ID: ${resourceToBurnId}) for Labor.`, 'info', realmId);
-                          if (stopCycleRef.current) { log('Cycle stopped before burning resource for labor.','info', realmId); break;}
-                          await systemCalls.burn_resource_for_labor_production({
-                              signer: account,
-                              entity_id: realmId,
-                              resource_types: [resourceToBurnId],
-                              resource_amounts: [multiplyByPrecision(resourceToBurnNat)],
-                          });
-                          log(`Successfully initiated burning ${resourceToBurnNat.toFixed(2)} of ${ResourcesIds[resourceToBurnId]} for Labor.`, 'success', realmId);
-                          if (!burnedForLaborList.includes(resourceToBurnId)) {
-                              burnedForLaborList.push(resourceToBurnId);
-                          }
-                      } catch (e) {
-                          log(`Error burning ${ResourcesIds[resourceToBurnId]} for Labor: ${(e as Error).message}`, 'error', realmId);
-                      }
-                  }
-              }
-          }
-          log(`Phase 1 (Labor Production) complete for realm ${realmId}. Burned ${burnedForLaborList.length} resource types for labor.`, 'info', realmId);
+        if (currentRealmLaborTypes.length > 0) {
+            allRealmOperations.push({
+                realmId,
+                realmName: realm.name,
+                laborProdArgs: {
+                    types: currentRealmLaborTypes,
+                    amounts: currentRealmLaborAmounts
+                },
+                rawReplenishArgs: null,
+                laborReplenishArgs: null
+            });
+        }
 
-          // Part 2: Replenish resources that were burned for Labor
-          if (burnedForLaborList.length > 0) {
-              if (stopCycleRef.current) {
-                  log('Production cycle stopped by user before replenishment phase.', 'info', realmId);
-                  break; // Exit from realm processing if stop is requested
-              }
-              log(`Phase 2: Attempting to replenish ${burnedForLaborList.length} resource types that were burned for Labor.`, 'info', realmId);
-              const laborBalanceFull = getBalance(realmId, LABOR_RESOURCE_ID, currentDefaultTick, components).balance;
-              const availableLaborNat = divideByPrecision(laborBalanceFull);
-              log(`Current available Labor for replenishment: ${availableLaborNat.toFixed(2)} (Using ${percentageLaborForResources * 100}% of this if needed).`, 'info', realmId);
+        // Replenishment data collection (only if this realm intended to burn for labor)
+        if (currentRealmIntendedLaborBurnResources.length > 0) {
+            const availableLaborNat = divideByPrecision(getBalance(realmId, LABOR_RESOURCE_ID, currentDefaultTick, components).balance);
+            
+            const currentRealmRawTypes: ResourcesIds[] = [];
+            const currentRealmRawCycles: number[] = [];
+            const resourcesForLaborReplenishInRealm: ResourcesIds[] = [];
+            
+            for (const resId of currentRealmIntendedLaborBurnResources) {
+                const inputs = configManager.complexSystemResourceInputs[resId];
+                if (inputs && inputs.length > 0) {
+                    let minCycles = Infinity; let canAfford = true;
+                    for (const input of inputs) {
+                        const balance = getBalance(realmId, input.resource, currentDefaultTick, components).balance;
+                        const available = Math.floor(divideByPrecision(balance) * percentageInputForResources);
+                        const cycles = Math.floor(available / input.amount);
+                        if (cycles === 0) { canAfford = false; break; }
+                        minCycles = Math.min(minCycles, cycles);
+                    }
+                    if (canAfford && minCycles > 0 && minCycles !== Infinity) {
+                        currentRealmRawTypes.push(resId); 
+                        currentRealmRawCycles.push(minCycles);
+                    } else { resourcesForLaborReplenishInRealm.push(resId); }
+                } else { resourcesForLaborReplenishInRealm.push(resId); }
+            }
 
-              for (const resourceIdToReplenish of burnedForLaborList) {
-                  if (stopCycleRef.current) {
-                      log('Production cycle stopped by user during resource replenishment iteration.', 'info', realmId);
-                      break; // Exit replenishment loop
-                  }
-                  log(`Evaluating replenishment for ${ResourcesIds[resourceIdToReplenish]} (ID: ${resourceIdToReplenish})`, 'info', realmId);
-                  let replenishedThisResource = false;
+            if (currentRealmRawTypes.length > 0) {
+                allRealmOperations.push({
+                    realmId,
+                    realmName: realm.name,
+                    laborProdArgs: null,
+                    rawReplenishArgs: {
+                        types: currentRealmRawTypes,
+                        cycles: currentRealmRawCycles
+                    },
+                    laborReplenishArgs: null
+                });
+            }
 
-                  // Attempt 1: Replenish with raw input resources
-                  log(`Attempting to replenish ${ResourcesIds[resourceIdToReplenish]} using raw inputs (${percentageInputForResources * 100}% of available).`, 'info', realmId);
-                  const inputs = configManager.complexSystemResourceInputs[resourceIdToReplenish];
-                  if (inputs && inputs.length > 0) {
-                      let minCyclesAffordableByInputs = Infinity;
-                      let canAffordAllInputs = true;
+            if (resourcesForLaborReplenishInRealm.length > 0) {
+                const currentRealmLaborReplenishTypes: ResourcesIds[] = [];
+                const currentRealmLaborReplenishCycles: number[] = [];
+                const perTypeLaborBudgetNat = resourcesForLaborReplenishInRealm.length > 0 ? Math.floor((availableLaborNat * percentageLaborForResources) / resourcesForLaborReplenishInRealm.length) : 0;
 
-                      for (const input of inputs) {
-                          const inputBalance = getBalance(realmId, input.resource, currentDefaultTick, components).balance;
-                          const availableInputForProdNat = Math.floor(divideByPrecision(inputBalance) * percentageInputForResources);
-                          const cyclesForThisInput = Math.floor(availableInputForProdNat / input.amount);
-                          
-                          if (cyclesForThisInput === 0) {
-                              log(`Cannot afford input ${ResourcesIds[input.resource]} for ${ResourcesIds[resourceIdToReplenish]}. Needed per cycle: ${input.amount}, Available for prod: ${availableInputForProdNat.toFixed(2)}`, 'info', realmId);
-                              canAffordAllInputs = false;
-                              break;
-                          }
-                          minCyclesAffordableByInputs = Math.min(minCyclesAffordableByInputs, cyclesForThisInput);
-                      }
-
-                      if (canAffordAllInputs && minCyclesAffordableByInputs > 0 && minCyclesAffordableByInputs !== Infinity) {
-                          try {
-                              log(`Replenishing ${ResourcesIds[resourceIdToReplenish]} using raw inputs for ${minCyclesAffordableByInputs} cycles.`, 'info', realmId);
-                              if (stopCycleRef.current) { log('Cycle stopped before replenishing with raw inputs.','info', realmId); break;}
-                              await systemCalls.burn_resource_for_resource_production({
-                                  signer: account,
-                                  from_entity_id: realmId,
-                                  produced_resource_types: [resourceIdToReplenish],
-                                  production_cycles: [minCyclesAffordableByInputs],
-                              });
-                              log(`Successfully initiated replenishment of ${ResourcesIds[resourceIdToReplenish]} for ${minCyclesAffordableByInputs} cycles using raw inputs.`, 'success', realmId);
-                              replenishedThisResource = true;
-                          } catch (e) {
-                              log(`Error replenishing ${ResourcesIds[resourceIdToReplenish]} with raw inputs: ${(e as Error).message}`, 'error', realmId);
-                          }
-                      } else {
-                          log(`Cannot afford all raw inputs for ${ResourcesIds[resourceIdToReplenish]} or no cycles possible for replenishment.`, 'info', realmId);
-                      }
-                  } else {
-                      log(`No complex input recipe found for ${ResourcesIds[resourceIdToReplenish]}.`, 'info', realmId);
-                  }
-
-                  // Attempt 2: Replenish with Labor (if not already replenished with raw inputs)
-                  if (!replenishedThisResource) {
-                      log(`Attempting to replenish ${ResourcesIds[resourceIdToReplenish]} using Labor.`, 'info', realmId);
-                      const laborConfigForReplenish = configManager.getLaborConfig(resourceIdToReplenish);
-                      if (laborConfigForReplenish && laborConfigForReplenish.inputResources.length > 0 && laborConfigForReplenish.laborBurnPerResourceOutput >= 0) { // Allow 0 labor burn if other simple inputs exist
-                          // Check if this resource *can* be produced by simple inputs (which typically includes labor)
-                          if (laborConfigForReplenish.resourceOutputPerInputResources > 0) {
-                              const laborToSpendForResourceNat = Math.floor(availableLaborNat * percentageLaborForResources);
-                              const outputPerCycleNat = laborConfigForReplenish.resourceOutputPerInputResources;
-                              
-                              // Calculate actual labor cost per cycle from inputResources list
-                              let actualLaborCostPerCycleNat = 0;
-                              let hasLaborInput = false;
-                              for(const inputResource of laborConfigForReplenish.inputResources) {
-                                  if (inputResource.resource === LABOR_RESOURCE_ID) {
-                                      actualLaborCostPerCycleNat = inputResource.amount; // Assumes amount is in natural units
-                                      hasLaborInput = true;
-                                      break;
-                                  }
-                              }
-
-                              // If recipe doesn't directly require labor but is simple, we might not proceed, or assume 0 labor cost if appropriate.
-                              // For now, we proceed if there's a labor input defined or if laborBurnPerResourceOutput is explicit (though direct input is better)
-                              // The field `laborBurnPerResourceOutput` might be an aggregate or average, best to use specific input costs if available.
-                              // We will prioritize direct labor input if specified in `inputResources`.
-
-                              if (hasLaborInput || laborConfigForReplenish.laborBurnPerResourceOutput > 0) {
-                                  // If direct labor input not found, fall back to laborBurnPerResourceOutput (less precise)
-                                  if (!hasLaborInput && laborConfigForReplenish.laborBurnPerResourceOutput > 0) {
-                                       actualLaborCostPerCycleNat = laborConfigForReplenish.laborBurnPerResourceOutput * outputPerCycleNat;
-                                       log(`Using calculated labor cost per cycle for ${ResourcesIds[resourceIdToReplenish]}: ${actualLaborCostPerCycleNat.toFixed(2)}`, 'info', realmId);
-                                  }
-
-                                  if (actualLaborCostPerCycleNat === 0 && !hasLaborInput) {
-                                       log(`Resource ${ResourcesIds[resourceIdToReplenish]} has a simple recipe but does not explicitly consume Labor. Skipping labor-based replenishment unless other simple inputs are handled.`, 'info', realmId);
-                                  } else {
-                                      const maxCyclesAffordableWithLabor = actualLaborCostPerCycleNat > 0 
-                                          ? Math.floor(laborToSpendForResourceNat / actualLaborCostPerCycleNat)
-                                          : (laborToSpendForResourceNat > 0 ? Infinity : 0); // If labor cost is 0, can do infinite cycles if any labor is to be spent (conceptually)
-
-                                      if (maxCyclesAffordableWithLabor > 0 && maxCyclesAffordableWithLabor !== Infinity) {
-                                          try {
-                                              log(`Replenishing ${ResourcesIds[resourceIdToReplenish]} using Labor for ${maxCyclesAffordableWithLabor} cycles. Labor to spend: ${laborToSpendForResourceNat.toFixed(2)}, Cost/cycle: ${actualLaborCostPerCycleNat.toFixed(2)}`, 'info', realmId);
-                                              if (stopCycleRef.current) { log('Cycle stopped before replenishing with labor.','info', realmId); break;}
-                                              await systemCalls.burn_labor_for_resource_production({
-                                                  signer: account,
-                                                  from_entity_id: realmId,
-                                                  produced_resource_types: [resourceIdToReplenish],
-                                                  production_cycles: [maxCyclesAffordableWithLabor],
-                                              });
-                                              log(`Successfully initiated replenishment of ${ResourcesIds[resourceIdToReplenish]} for ${maxCyclesAffordableWithLabor} cycles using Labor.`, 'success', realmId);
-                                          } catch (e) {
-                                              log(`Error replenishing ${ResourcesIds[resourceIdToReplenish]} with Labor: ${(e as Error).message}`, 'error', realmId);
-                                          }
-                                      } else if (maxCyclesAffordableWithLabor === Infinity && laborConfigForReplenish.inputResources.every(inp => inp.resource !== LABOR_RESOURCE_ID)) {
-                                          log(`Resource ${ResourcesIds[resourceIdToReplenish]} simple recipe has no direct labor cost, but other simple inputs may be required. This path needs review if those inputs aren't covered.`, 'info', realmId);
-                                      } else {
-                                          log(`Not enough Labor or zero cycles for replenishment of ${ResourcesIds[resourceIdToReplenish]} with Labor. Labor to spend: ${laborToSpendForResourceNat.toFixed(2)}, Cost/cycle: ${actualLaborCostPerCycleNat.toFixed(2)}`, 'info', realmId);
-                                      }
-                                  }
-                              } else {
-                                  log(`Resource ${ResourcesIds[resourceIdToReplenish]} does not have a primary Labor consumption pathway in its simple recipe according to inputResources and laborBurnPerResourceOutput.`, 'info', realmId);
-                              }
-                          } else {
-                              log(`Simple production recipe for ${ResourcesIds[resourceIdToReplenish]} has zero output per cycle. Cannot replenish with labor.`, 'info', realmId);
-                          }
-                      } else {
-                          log(`No suitable simple (Labor-based) production config found for replenishment of Resource ID: ${resourceIdToReplenish}`, 'info', realmId);
-                      }
-                  }
-              }
-          } else {
-              log('Phase 2: No resources were burned for Labor in this cycle, so no specific replenishment attempted.', 'info', realmId);
-          }
-
-        } catch (realmError) {
-          log(`Unhandled error processing realm ${realmId}: ${(realmError as Error).message}`, 'error', realmId);
+                for (const resId of resourcesForLaborReplenishInRealm) {
+                    const cfg = configManager.getLaborConfig(resId);
+                    if (cfg && cfg.inputResources.length > 0 && cfg.laborBurnPerResourceOutput >= 0 && cfg.resourceOutputPerInputResources > 0) {
+                        let costPerCycle = 0; let hasLabor = false;
+                        for (const input of cfg.inputResources) {
+                            if (input.resource === LABOR_RESOURCE_ID) { costPerCycle = input.amount; hasLabor = true; break; }
+                        }
+                        if (!hasLabor && cfg.laborBurnPerResourceOutput > 0) costPerCycle = cfg.laborBurnPerResourceOutput * cfg.resourceOutputPerInputResources;
+                        if (costPerCycle === 0 && !hasLabor) continue;
+                        
+                        const cycles = costPerCycle > 0 && perTypeLaborBudgetNat > 0 ? Math.floor(perTypeLaborBudgetNat / costPerCycle) : 0;
+                        if (cycles > 0) {
+                            currentRealmLaborReplenishTypes.push(resId);
+                            currentRealmLaborReplenishCycles.push(cycles);
+                        }
+                    }
+                }
+                if (currentRealmLaborReplenishTypes.length > 0) {
+                    allRealmOperations.push({
+                        realmId,
+                        realmName: realm.name,
+                        laborProdArgs: null,
+                        rawReplenishArgs: null,
+                        laborReplenishArgs: {
+                            types: currentRealmLaborReplenishTypes,
+                            cycles: currentRealmLaborReplenishCycles,
+                            laborBudgetPerType: perTypeLaborBudgetNat
+                        }
+                    });
+                }
+            }
         }
       }
+      log('Phase 1: Data collection complete.', 'info');
+      if (stopCycleRef.current) {
+          log('Cycle stopped by user after data collection phase.', 'info');
+          setIsLoading(false); return;
+      }
 
-      log('Auto production cycle finished or stopped.');
-      setIsLoading(false);
+      // --- Phase 2: Transaction Execution (Sequentially Per Realm, Batched within Realm) ---
+      log(`Phase 2: Executing batched transactions sequentially for ${allRealmOperations.length} prepared realm operations...`, 'info');
+      let realmExecuteCount = 0;
+      for (const op of allRealmOperations) {
+        realmExecuteCount++;
+        if (stopCycleRef.current) {
+          log('Transaction execution phase stopped by user.', 'info', op.realmId);
+          break;
+        }
+        log(`Executing operations for Realm ID: ${op.realmId} (${op.realmName}) (Realm ${realmExecuteCount} of ${allRealmOperations.length})`, 'info', op.realmId);
+
+        // Execute Labor Production for this realm if args exist
+        if (op.laborProdArgs) {
+            if (stopCycleRef.current) { log('Skipping labor production for realm due to stop signal.', 'info', op.realmId); break; }
+            try {
+                log(`Batch burning ${op.laborProdArgs.types.length} resource types for Labor in realm ${op.realmId}.`, 'info', op.realmId);
+                await systemCalls.burn_resource_for_labor_production({
+                    signer: account,
+                    entity_id: op.realmId, // Single realm ID
+                    resource_types: op.laborProdArgs.types, // Array of types for this realm
+                    resource_amounts: op.laborProdArgs.amounts, // Array of amounts for this realm
+                });
+                log(`SUCCESS: Batch burn for Labor in realm ${op.realmId}. Resources: ${op.laborProdArgs.types.map(id => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId);
+            } catch (e) {
+                log(`ERROR: Batch burn for Labor in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId);
+            }
+        }
+
+        // Execute Raw Material Replenishment for this realm if args exist
+        if (op.rawReplenishArgs && op.rawReplenishArgs.types.length > 0) {
+            if (stopCycleRef.current) { log('Skipping raw material replenishment for realm due to stop signal.', 'info', op.realmId); break; }
+            try {
+                log(`Batch replenishing ${op.rawReplenishArgs.types.length} resource types with raw inputs in realm ${op.realmId}.`, 'info', op.realmId);
+                await systemCalls.burn_resource_for_resource_production({
+                    signer: account,
+                    from_entity_id: op.realmId, // Single realm ID
+                    produced_resource_types: op.rawReplenishArgs.types, // Array of types for this realm
+                    production_cycles: op.rawReplenishArgs.cycles, // Array of cycles for this realm
+                });
+                log(`SUCCESS: Batch replenish with raw inputs in realm ${op.realmId}. Resources: ${op.rawReplenishArgs.types.map(id => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId);
+            } catch (e) {
+                log(`ERROR: Batch replenish with raw inputs in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId);
+            }
+        }
+
+        // Execute Labor Replenishment for this realm if args exist
+        if (op.laborReplenishArgs && op.laborReplenishArgs.types.length > 0) {
+            if (stopCycleRef.current) { log('Skipping labor replenishment for realm due to stop signal.', 'info', op.realmId); break; }
+            try {
+                log(`Batch replenishing ${op.laborReplenishArgs.types.length} resource types with Labor in realm ${op.realmId}.`, 'info', op.realmId);
+                await systemCalls.burn_labor_for_resource_production({
+                    signer: account,
+                    from_entity_id: op.realmId, // Single realm ID
+                    produced_resource_types: op.laborReplenishArgs.types, // Array of types for this realm
+                    production_cycles: op.laborReplenishArgs.cycles, // Array of cycles for this realm
+                });
+                log(`SUCCESS: Batch replenish with Labor in realm ${op.realmId}. Resources: ${op.laborReplenishArgs.types.map(id => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId);
+            } catch (e) {
+                log(`ERROR: Batch replenish with Labor in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId);
+            }
+        }
+        log(`All operations executed for Realm ID: ${op.realmId}`, 'info', op.realmId);
+      }
+      // End of Phase 2 loop (per-realm execution)
+      
     } catch (error) {
       log(`Error processing production cycle: ${(error as Error).message}`, 'error');
       setIsLoading(false);
@@ -392,29 +407,55 @@ export const AutoResourceProducerScript: React.FC = () => {
       processProductionCycle();
       intervalId = setInterval(processProductionCycle, productionIntervalMs);
     } else {
-      log('Auto-producer stopped.');
-      if (intervalId) {
-        clearInterval(intervalId);
+      // Only log "stopped" if it was previously running and is now not.
+      if (prevIsRunningRef.current && !isRunning) {
+        log('Auto-producer stopped.');
       }
     }
+
+    // Update the ref to the current isRunning state for the next render cycle.
+    // This runs after the main effect logic for the current render.
+    prevIsRunningRef.current = isRunning;
+
     return () => {
       if (intervalId) {
         clearInterval(intervalId);
-        log('Auto-producer interval cleared on unmount/stop.');
+        // Avoid logging "interval cleared" if only settings changed while stopped.
+        if (prevIsRunningRef.current) { // Only log if it was running before this effect instance
+            log('Auto-producer interval cleared on unmount/stop.', 'info');
+        }
       }
     };
   }, [isRunning, processProductionCycle, log, productionIntervalMs]);
 
+  // Refined toggleRunning: purely for turning auto-scheduler on/off when no cycle is active.
   const toggleRunning = () => {
     setIsRunning((prevIsRunning: boolean) => {
       const newIsRunning = !prevIsRunning;
-      if (!newIsRunning) { // If stopping
-        stopCycleRef.current = true; // Signal current cycle to stop
-        log('Stop signal sent to current production cycle.', 'info');
+      if (newIsRunning) { // Starting auto-scheduler
+        log('Auto-producer scheduling enabled.', 'info');
+        stopCycleRef.current = false; // Ensure ready for new auto-runs
+      } else { // Stopping auto-scheduler
+        log('Auto-producer scheduling disabled.', 'info');
+        // stopCycleRef is typically handled by the effect cleanup or manual stop, 
+        // but can be set true if stopping scheduling explicitly without an active cycle stopping.
+        // However, processProductionCycle will always reset it if it starts.
       }
       localStorage.setItem(STORAGE_KEY_IS_RUNNING, newIsRunning.toString());
       return newIsRunning;
     });
+  };
+
+  const handlePrimaryButtonClick = () => {
+    if (isLoading) { // A cycle (manual or auto) is currently processing
+        log('Stop signal sent to current active cycle.', 'info');
+        stopCycleRef.current = true;
+        if (isRunning) { // If it was an auto-cycle that was running, also turn off auto-scheduling
+            setIsRunning(false); // This will also ensure interval is cleared via useEffect and state saved
+        }
+    } else { // No cycle is currently processing, so toggle the auto-scheduler
+        toggleRunning();
+    }
   };
   
   const handleSliderChange = (setter: React.Dispatch<React.SetStateAction<number>>, isPercentage: boolean) => (e: ChangeEvent<HTMLInputElement>) => {
@@ -429,7 +470,7 @@ export const AutoResourceProducerScript: React.FC = () => {
   const buttonStyle: React.CSSProperties = {
     padding: '10px 15px',
     margin: '5px',
-    backgroundColor: isRunning ? '#dc3545' : '#28a745', 
+    // Base color will be overridden by isLoading or depend on isRunning
     color: 'white',
     border: 'none',
     borderRadius: '4px',
@@ -514,11 +555,17 @@ export const AutoResourceProducerScript: React.FC = () => {
       </div>
 
       <button 
-        style={buttonStyle} 
-        onClick={toggleRunning} 
-        disabled={!isRunning && isLoading}
+        style={isLoading 
+            ? { ...buttonStyle, backgroundColor: '#ffc107', color: 'black' } 
+            : { ...buttonStyle, backgroundColor: isRunning ? '#dc3545' : '#28a745' }}
+        onClick={handlePrimaryButtonClick} 
+        disabled={!account?.address} // Only disabled if no account
       >
-        {isRunning ? 'Stop Auto-Producer' : 'Start Auto-Producer'}
+        {isLoading 
+            ? 'Stop Current Cycle' 
+            : isRunning 
+                ? 'Stop Auto-Producer' 
+                : 'Start Auto-Producer'}
       </button>
       <button
         style={manualRunButtonStyle}
