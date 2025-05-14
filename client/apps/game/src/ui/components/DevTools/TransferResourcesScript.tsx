@@ -123,35 +123,23 @@ export const TransferResourcesScript: React.FC = () => {
         return getComponentValue(components.ResourceArrival, entityId);
     }).filter(Boolean);
     
-    console.log(`Found ${allRawArrivalComponents.length} total ResourceArrival components.`);
-    if (allRawArrivalComponents.length > 0) {
-        console.log("Sample raw arrival components (up to 3):", allRawArrivalComponents.slice(0, 3));
-    }
-
     for (const realm of playerRealms) {
-        console.log(`Processing deposits for realm: ${realm.name || realm.entityId} (ID: ${realm.entityId})`);
-        
         const realmEntityId = realm.entityId;
         const arrivalsForThisRealm = allRawArrivalComponents
             .filter((rawArrivalComponent: any) => Number(rawArrivalComponent.structure_id) === Number(realmEntityId));
 
         if (!arrivalsForThisRealm || arrivalsForThisRealm.length === 0) {
-            console.log(`No ResourceArrival component instances found for realm ID: ${realmEntityId}.`);
             continue;
         }
         
-        console.log(`Found ${arrivalsForThisRealm.length} ResourceArrival instance(s) for realm: ${realm.name || realm.entityId}.`);
-
         for (const rawArrival of arrivalsForThisRealm) {
             if (!rawArrival) continue;
-            console.log(`Inspecting raw arrival for realm ${realmEntityId}, day ${rawArrival.day}:`, rawArrival);
 
             for (let slotNum = 1; slotNum <= 24; slotNum++) {
                 const slotKey = `slot_${slotNum}` as keyof typeof rawArrival;
                 const slotData = rawArrival[slotKey] as any[];
 
                 if (slotData && slotData.length > 0) {
-                    console.log(`Found resources in day ${rawArrival.day}, slot ${slotNum} for realm ${realmEntityId}`);
                     let resourcesInSlot: Resource[] = [];
                     try {
                         for (const item of slotData) {
@@ -159,12 +147,9 @@ export const TransferResourcesScript: React.FC = () => {
                                 const resourceId = Number(item[0].value);
                                 const amount = Number(BigInt(item[1].value)); 
                                 resourcesInSlot.push({ resourceId, amount });
-                            } else {
-                                console.warn(`Malformed resource item in slot ${slotNum}, day ${rawArrival.day} for realm ${realmEntityId}:`, item);
                             }
                         }
                     } catch (e: any) {
-                        console.error(`Error processing resources in slot ${slotNum}, day ${rawArrival.day} for realm ${realmEntityId}: ${e.message}`, slotData);
                         totalErrorCount++;
                         continue;
                     }
@@ -172,13 +157,12 @@ export const TransferResourcesScript: React.FC = () => {
                     if (resourcesInSlot.length > 0) {
                         const arrivalInfo: ResourceArrivalInfo = {
                             structureEntityId: Number(rawArrival.structure_id),
-                            day: Number(rawArrival.day),
-                            slot: slotNum,
-                            arrivesAt: 0, // Placeholder
+                            day: rawArrival.day,
+                            slot: BigInt(slotNum),
+                            arrivesAt: 0n,
                             resources: resourcesInSlot,
                         } as ResourceArrivalInfo;
                         
-                        console.log(`Attempting to offload for realm ${realmEntityId}, day ${arrivalInfo.day}, slot ${arrivalInfo.slot} with ${arrivalInfo.resources.length} types.`);
                         try {
                             const manager = new ResourceArrivalManager(components, systemCalls, arrivalInfo);
                             await manager.offload(account, arrivalInfo.resources.length);
