@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
 //import { BatchRealmsPerZoneScript } from './BatchRealmsPerZoneScript'; // Import the new script
 import { BuildBuildingsScript } from './BuildBuildingsScript'; // Import the new script
-//import { GetBaseMapTilesScript } from './GetBaseMapTilesScript';
 import { GetMyRealmsScript } from './GetMyRealmsScript'; // Import the new script
 import { TransferResourcesScript } from './TransferResourcesScript'; // Import the new script
 
 // Placeholder for where your script components will be imported
 // import { BatchRealmSettleScript } from './BatchRealmSettleScript';
 
-type ScriptId = 'getAllLocations' | 'batchRealmsPerZone' | 'getMyRealms' | 'transferResources' | 'getBaseMapTiles' | 'buildBuildings' | null; // Add new script ID
+type ScriptId = 'getAllLocations' | 'batchRealmsPerZone' | 'getMyRealms' | 'transferResources' | 'getBaseMapTiles' | 'buildBuildings' | 'depositAllTransfers' | null; // Added 'depositAllTransfers'
 
 interface Script {
   id: ScriptId;
@@ -28,9 +27,10 @@ export const DevToolsPanel: React.FC = () => {
     //{ id: 'getAllLocations', name: 'Get base map tiles', component: GetBaseMapTilesScript },
     //{ id: 'batchRealmsPerZone', name: 'Settle realms per zone', description: 'Batch settle realms based on zone and bank availability.', component: BatchRealmsPerZoneScript },
     { id: 'getMyRealms', name: 'Get owned structures id', description: 'Fetches and displays all structures (realms, banks, villages) owned by the player.', component: GetMyRealmsScript }, // Add the new script here
-    { id: 'transferResources', name: 'Transfer resources', description: 'Transfer resources between two realms using a JSON input.', component: TransferResourcesScript }, // Add the new script here
-    //{ id: 'getBaseMapTiles', name: 'Get Base Map Tiles', description: 'Fetches and displays base map tiles from the backend.', component: GetBaseMapTilesScript },
     { id: 'buildBuildings', name: 'Create buildings', description: 'Build multiple buildings on specified realms using a JSON input.', component: BuildBuildingsScript },
+    { id: 'transferResources', name: 'Transfer and deposit', description: 'Transfer resources between two realms using a JSON input.', component: TransferResourcesScript }, // Add the new script here
+    //{ id: 'getBaseMapTiles', name: 'Get Base Map Tiles', description: 'Fetches and displays base map tiles from the backend.', component: GetBaseMapTilesScript },
+    //{ id: 'depositAllTransfers', name: 'Deposit All Transfers', description: 'Finds and deposits all resource transfers ready to be offloaded at player structures.', component: DepositAllTransfersScript },
     // Add other scripts here
     // e.g. { id: 'anotherScript', name: 'Another Dev Script', component: AnotherScriptComponent },
   ];

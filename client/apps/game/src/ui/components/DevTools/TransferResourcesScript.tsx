@@ -1,6 +1,10 @@
-import { useDojo } from "@bibliothecadao/react";
-import { RESOURCE_PRECISION } from "@bibliothecadao/types";
+import Button from "@/ui/elements/button";
+import { ResourceArrivalManager } from "@bibliothecadao/eternum";
+import { useDojo, usePlayerStructures } from "@bibliothecadao/react";
+import { Resource, RESOURCE_PRECISION, ResourceArrivalInfo, StructureType } from "@bibliothecadao/types";
+import { getComponentValue } from "@dojoengine/recs";
 import React, { useCallback, useEffect, useState } from 'react';
+
 // Assuming a system call like transfer_resources_between_entities exists.
 // Adjust if your system call has a different name or signature.
 
@@ -82,7 +86,7 @@ const EXAMPLE_JSON_INPUT = JSON.stringify(
 export const TransferResourcesScript: React.FC = () => {
   const {
     account: { account },
-    setup: { systemCalls },
+    setup: { components, systemCalls },
   } = useDojo();
 
   // localStorage key for persisting JSON input
@@ -94,6 +98,106 @@ export const TransferResourcesScript: React.FC = () => {
   });
   const [isLoading, setIsLoading] = useState(false);
 
+  // --- Logic from DepositAllTransfersScript --- 
+  const playerStructures: any[] = usePlayerStructures();
+  const playerRealms = playerStructures.filter(
+    (structure: any) => structure.category === StructureType.Realm,
+  );
+
+  const executeDeposits = async () => {
+    if (!account) {
+      console.error("Account not available for deposits.");
+      return;
+    }
+    setIsLoading(true);
+    console.log("Starting deposit all process...");
+    let totalSuccessCount = 0;
+    let totalErrorCount = 0;
+
+    if (!components.ResourceArrival) {
+        console.error("ResourceArrival component not found in setup.");
+        setIsLoading(false);
+        return;
+    }
+    const allRawArrivalComponents = Array.from(components.ResourceArrival.entities()).map((entityId: any) => {
+        return getComponentValue(components.ResourceArrival, entityId);
+    }).filter(Boolean);
+    
+    console.log(`Found ${allRawArrivalComponents.length} total ResourceArrival components.`);
+    if (allRawArrivalComponents.length > 0) {
+        console.log("Sample raw arrival components (up to 3):", allRawArrivalComponents.slice(0, 3));
+    }
+
+    for (const realm of playerRealms) {
+        console.log(`Processing deposits for realm: ${realm.name || realm.entityId} (ID: ${realm.entityId})`);
+        
+        const realmEntityId = realm.entityId;
+        const arrivalsForThisRealm = allRawArrivalComponents
+            .filter((rawArrivalComponent: any) => Number(rawArrivalComponent.structure_id) === Number(realmEntityId));
+
+        if (!arrivalsForThisRealm || arrivalsForThisRealm.length === 0) {
+            console.log(`No ResourceArrival component instances found for realm ID: ${realmEntityId}.`);
+            continue;
+        }
+        
+        console.log(`Found ${arrivalsForThisRealm.length} ResourceArrival instance(s) for realm: ${realm.name || realm.entityId}.`);
+
+        for (const rawArrival of arrivalsForThisRealm) {
+            if (!rawArrival) continue;
+            console.log(`Inspecting raw arrival for realm ${realmEntityId}, day ${rawArrival.day}:`, rawArrival);
+
+            for (let slotNum = 1; slotNum <= 24; slotNum++) {
+                const slotKey = `slot_${slotNum}` as keyof typeof rawArrival;
+                const slotData = rawArrival[slotKey] as any[];
+
+                if (slotData && slotData.length > 0) {
+                    console.log(`Found resources in day ${rawArrival.day}, slot ${slotNum} for realm ${realmEntityId}`);
+                    let resourcesInSlot: Resource[] = [];
+                    try {
+                        for (const item of slotData) {
+                            if (item && item.length === 2 && item[0] && item[1]) {
+                                const resourceId = Number(item[0].value);
+                                const amount = Number(BigInt(item[1].value)); 
+                                resourcesInSlot.push({ resourceId, amount });
+                            } else {
+                                console.warn(`Malformed resource item in slot ${slotNum}, day ${rawArrival.day} for realm ${realmEntityId}:`, item);
+                            }
+                        }
+                    } catch (e: any) {
+                        console.error(`Error processing resources in slot ${slotNum}, day ${rawArrival.day} for realm ${realmEntityId}: ${e.message}`, slotData);
+                        totalErrorCount++;
+                        continue;
+                    }
+
+                    if (resourcesInSlot.length > 0) {
+                        const arrivalInfo: ResourceArrivalInfo = {
+                            structureEntityId: Number(rawArrival.structure_id),
+                            day: Number(rawArrival.day),
+                            slot: slotNum,
+                            arrivesAt: 0, // Placeholder
+                            resources: resourcesInSlot,
+                        } as ResourceArrivalInfo;
+                        
+                        console.log(`Attempting to offload for realm ${realmEntityId}, day ${arrivalInfo.day}, slot ${arrivalInfo.slot} with ${arrivalInfo.resources.length} types.`);
+                        try {
+                            const manager = new ResourceArrivalManager(components, systemCalls, arrivalInfo);
+                            await manager.offload(account, arrivalInfo.resources.length);
+                            console.log(`Successfully offloaded for realm ${realmEntityId}, day ${arrivalInfo.day}, slot ${arrivalInfo.slot}.`);
+                            totalSuccessCount++;
+                        } catch (e: any) {
+                            console.error(`Error offloading for realm ${realmEntityId}, day ${arrivalInfo.day}, slot ${arrivalInfo.slot}: ${e.message}`);
+                            totalErrorCount++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    console.log(`Deposit all process finished. Successes: ${totalSuccessCount}, Errors: ${totalErrorCount}.`);
+    setIsLoading(false);
+  };
+  // --- End of logic from DepositAllTransfersScript ---
+
   // Save to localStorage whenever jsonDataInput changes
   useEffect(() => {
     localStorage.setItem(LOCAL_STORAGE_KEY, jsonDataInput);
@@ -101,13 +205,13 @@ export const TransferResourcesScript: React.FC = () => {
 
   const handleTransfer = useCallback(async () => {
     if (!account || !account.address) {
+      console.error("Account not available for transfers.");
       return;
     }
-    // Check for the send_resources_multiple system call
     if (!systemCalls?.send_resources_multiple) {
+      console.error("System call send_resources_multiple not available.");
       return;
     }
-
     let parsedInputArray: TransferInputArray;
     try {
       parsedInputArray = JSON.parse(jsonDataInput);
@@ -201,15 +305,16 @@ export const TransferResourcesScript: React.FC = () => {
         signer: account,
         calls: callsForSystem,
       });
+      console.log("Batch transfer successful!");
 
     } catch (error) {
-      console.error("Error during batch transfer:", error);
+      console.error("Error during batch resource transfer:", error);
     } finally {
       setIsLoading(false);
     }
-  }, [account, systemCalls, jsonDataInput]);
+  }, [account, systemCalls, jsonDataInput, components]);
 
-  const styles = {
+  const styles: {[key: string]: React.CSSProperties } = {
     container: { padding: '10px' },
     title: { margin: '0 0 10px 0' },
     p: { fontSize: '0.85em', marginBottom: '10px' },
@@ -236,6 +341,7 @@ export const TransferResourcesScript: React.FC = () => {
       fontSize: '1em',
       opacity: isLoading ? 0.7 : 1,
     },
+    buttonContainer: { display: 'flex', gap: '10px', marginBottom: '10px' },
   };
 
   // Prepare the display string for resources types
@@ -245,27 +351,37 @@ export const TransferResourcesScript: React.FC = () => {
   .join('\n')}`;
 
   return (
-    <div style={styles.container}>
-      <h4 style={styles.title}>Transfer resources</h4>
-      <p style={styles.p}>
-        Input a JSON array of transfer operations.
-      </p>
-      <textarea
-        style={styles.textArea}
-        value={jsonDataInput}
-        onChange={(e) => setJsonDataInput(e.target.value)}
-        placeholder='Enter transfer details as JSON'
-      />
-      <button
-        style={styles.button}
-        onClick={handleTransfer}
-        disabled={isLoading || !account?.address || !systemCalls?.send_resources_multiple}
-      >
-        {isLoading ? 'Transferring...' : 'Transfer Resources'}
-      </button>
-       <pre style={{ fontSize: '0.7em', color: '#ccc', maxHeight: '100px', overflowY: 'auto', background: '#222', padding: '5px', whiteSpace: 'pre-wrap', userSelect: 'text', marginTop: '15px' }}> {/* Ensure whiteSpace and userSelect for copyability, Added marginTop */} 
-         {resourceTypesDisplayString}
-      </pre>
-    </div>
+    React.createElement("div", { style: styles.container },
+      React.createElement("h4", { style: styles.title }, "Transfer & Deposit"),
+      React.createElement("p", { style: styles.p }, 
+        "Use the text area to input JSON for batch resource transfers. " +
+        "Use the buttons to execute transfers and deposit all transfers."
+      ),
+      React.createElement("textarea", {
+        style: styles.textArea,
+        value: jsonDataInput,
+        onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => setJsonDataInput(e.target.value),
+        placeholder: 'Enter transfer details as JSON'
+      }),
+      React.createElement("div", { style: styles.buttonContainer },
+        React.createElement(Button, {
+          style: {...styles.button, backgroundColor: '#007bff', opacity: isLoading ? 0.7 : 1},
+          onClick: handleTransfer,
+          disabled: isLoading || !account?.address || !systemCalls?.send_resources_multiple,
+          children: isLoading ? 'Processing...' : 'Transfer resources'
+        }),
+        React.createElement(Button, {
+          style: {...styles.button, backgroundColor: '#28a745', opacity: isLoading ? 0.7 : 1},
+          onClick: executeDeposits,
+          disabled: isLoading || !account?.address || playerRealms.length === 0,
+          children: isLoading ? 'Processing...' : `Deposit all`
+        })
+      ),
+      React.createElement("pre", { 
+        style: { fontSize: '0.7em', color: '#ccc', maxHeight: '100px', overflowY: 'auto', background: '#222', padding: '5px', whiteSpace: 'pre-wrap', userSelect: 'text', marginTop: '15px' }
+       },
+         resourceTypesDisplayString
+      )
+    )
   );
 }; 
