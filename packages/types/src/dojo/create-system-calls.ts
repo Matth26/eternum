@@ -214,12 +214,28 @@ export function createSystemCalls({ provider, authHandler }: { provider: any; au
     await provider.burn_resource_for_labor_production(props);
   };
 
+  const burn_resource_for_labor_productions = async (props: SystemProps.BurnOtherResourcesForLaborProductionProps[]) => {
+    await provider.burn_resource_for_labor_production(props);
+  };
+
   const burn_labor_for_resource_production = async (props: SystemProps.BurnLaborResourcesForOtherProductionProps) => {
     await provider.burn_labor_for_resource_production(props);
   };
 
+  const burn_labor_for_resource_productions = async (
+    props: SystemProps.BurnLaborResourcesForOtherProductionProps[],
+  ) => {
+    await provider.burn_labor_for_resource_productions(props);
+  };
+
   const burn_resource_for_resource_production = async (
     props: SystemProps.BurnOtherPredefinedResourcesForResourcesProps,
+  ) => {
+    await provider.burn_resource_for_resource_production(props);
+  };
+
+  const burn_resource_for_resource_productions = async (
+    props: SystemProps.BurnOtherPredefinedResourcesForResourcesProps[],
   ) => {
     await provider.burn_resource_for_resource_production(props);
   };
@@ -398,8 +414,11 @@ export function createSystemCalls({ provider, authHandler }: { provider: any; au
     bridge_withdraw_from_realm: withAuth(bridge_withdraw_from_realm),
 
     burn_resource_for_labor_production: withAuth(burn_resource_for_labor_production),
+    burn_resource_for_labor_productions: withAuth(burn_resource_for_labor_productions),
     burn_labor_for_resource_production: withAuth(burn_labor_for_resource_production),
+    burn_labor_for_resource_productions: withAuth(burn_labor_for_resource_productions),
     burn_resource_for_resource_production: withAuth(burn_resource_for_resource_production),
+    burn_resource_for_resource_productions: withAuth(burn_resource_for_resource_productions),
 
     guard_add: withAuth(guard_add),
     guard_delete: withAuth(guard_delete),

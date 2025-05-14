@@ -2569,6 +2569,24 @@ export class EternumProvider extends EnhancedDojoProvider {
 
     return await this.promiseQueue.enqueue(call);
   }
+  
+  public async burn_resource_for_labor_productions(props: SystemProps.BurnOtherResourcesForLaborProductionProps[]) {
+    const signer = props[0].signer;
+    const calls = props.map((call) => {
+      return {
+        contractAddress: getContractByName(this.manifest, `${NAMESPACE}-production_systems`),
+        entrypoint: "burn_resource_for_labor_production",
+        calldata: [
+          call.entity_id,
+          call.resource_types.length,
+          ...call.resource_types,
+          call.resource_amounts.length,
+          ...call.resource_amounts,
+        ],
+      };
+    });
+    return await this.executeAndCheckTransaction(signer, calls);
+  }
 
   /**
    * Burn labor resources to produce other resources
@@ -2611,6 +2629,24 @@ export class EternumProvider extends EnhancedDojoProvider {
 
     return await this.promiseQueue.enqueue(call);
   }
+  
+  public async burn_labor_for_resource_productions(props: SystemProps.BurnLaborResourcesForOtherProductionProps[]) {
+    const signer = props[0].signer;
+    const calls = props.map((call) => {
+      return {
+        contractAddress: getContractByName(this.manifest, `${NAMESPACE}-production_systems`),
+        entrypoint: "burn_labor_for_resource_production",
+        calldata: [
+          call.from_entity_id,
+          call.production_cycles.length,
+          ...call.production_cycles,
+          call.produced_resource_types.length,
+          ...call.produced_resource_types,
+        ],
+      };
+    });
+    return await this.executeAndCheckTransaction(signer, calls);
+  }
 
   /**
    * Burn predefined resources to produce other resources
@@ -2649,6 +2685,24 @@ export class EternumProvider extends EnhancedDojoProvider {
     });
 
     return await this.promiseQueue.enqueue(call);
+  }
+
+  public async burn_resource_for_resource_productions(props: SystemProps.BurnOtherPredefinedResourcesForResourcesProps[]) {
+    const signer = props[0].signer;
+    const calls = props.map((call) => {
+      return {
+        contractAddress: getContractByName(this.manifest, `${NAMESPACE}-production_systems`),
+        entrypoint: "burn_resource_for_resource_production",
+        calldata: [
+          call.from_entity_id,
+          call.produced_resource_types.length,
+          ...call.produced_resource_types,
+          call.production_cycles.length,
+          ...call.production_cycles,
+        ],
+      };
+    });
+    return await this.executeAndCheckTransaction(signer, calls);
   }
 
   // Marketplace functions
