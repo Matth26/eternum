@@ -18,11 +18,25 @@ const DEFAULT_PERCENTAGE_FOR_LABOR_INPUT = 0.5;
 const DEFAULT_PERCENTAGE_INPUT_FOR_RESOURCES = 0.5; 
 const DEFAULT_PERCENTAGE_LABOR_FOR_RESOURCES = 0.25; 
 
+// localStorage keys
+const STORAGE_KEY_PREFIX = 'autoResourceProducer_';
+const STORAGE_KEY_INTERVAL = `${STORAGE_KEY_PREFIX}productionIntervalMins`;
+const STORAGE_KEY_PERCENT_LABOR_INPUT = `${STORAGE_KEY_PREFIX}percentageForLaborInput`;
+const STORAGE_KEY_PERCENT_INPUT_RESOURCES = `${STORAGE_KEY_PREFIX}percentageInputForResources`;
+const STORAGE_KEY_PERCENT_LABOR_RESOURCES = `${STORAGE_KEY_PREFIX}percentageLaborForResources`;
+const STORAGE_KEY_LOGS = `${STORAGE_KEY_PREFIX}logs`;
+const STORAGE_KEY_IS_RUNNING = `${STORAGE_KEY_PREFIX}isRunning`;
+
 interface LogEntry {
   timestamp: Date;
   message: string;
   realmId?: ID;
   type: 'info' | 'error' | 'success';
+}
+
+// Type for log entries as stored in localStorage (timestamp as string)
+interface RawLogEntry extends Omit<LogEntry, 'timestamp'> {
+  timestamp: string;
 }
 
 export const AutoResourceProducerScript: React.FC = () => {
@@ -36,16 +50,32 @@ export const AutoResourceProducerScript: React.FC = () => {
   const [isRunning, setIsRunning] = useState(false);
 
   // Configurable state variables
-  const [productionIntervalMins, setProductionIntervalMins] = useState<number>(DEFAULT_PRODUCTION_INTERVAL_MIN);
-  const [percentageForLaborInput, setPercentageForLaborInput] = useState<number>(DEFAULT_PERCENTAGE_FOR_LABOR_INPUT);
-  const [percentageInputForResources, setPercentageInputForResources] = useState<number>(DEFAULT_PERCENTAGE_INPUT_FOR_RESOURCES);
-  const [percentageLaborForResources, setPercentageLaborForResources] = useState<number>(DEFAULT_PERCENTAGE_LABOR_FOR_RESOURCES);
+  const [productionIntervalMins, setProductionIntervalMins] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_INTERVAL);
+    return saved ? parseFloat(saved) : DEFAULT_PRODUCTION_INTERVAL_MIN;
+  });
+  const [percentageForLaborInput, setPercentageForLaborInput] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_PERCENT_LABOR_INPUT);
+    return saved ? parseFloat(saved) : DEFAULT_PERCENTAGE_FOR_LABOR_INPUT;
+  });
+  const [percentageInputForResources, setPercentageInputForResources] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_PERCENT_INPUT_RESOURCES);
+    return saved ? parseFloat(saved) : DEFAULT_PERCENTAGE_INPUT_FOR_RESOURCES;
+  });
+  const [percentageLaborForResources, setPercentageLaborForResources] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_PERCENT_LABOR_RESOURCES);
+    return saved ? parseFloat(saved) : DEFAULT_PERCENTAGE_LABOR_FOR_RESOURCES;
+  });
 
   const productionIntervalMs = productionIntervalMins * 60 * 1000;
 
   const log = useCallback((message: string, type: LogEntry['type'] = 'info', realmId?: ID) => {
     console.log(`[AutoProducer] ${realmId ? `(Realm ${realmId}) ` : ''}${message}`);
-    setLogs((prevLogs: LogEntry[]) => [{ timestamp: new Date(), message, realmId, type }, ...prevLogs].slice(0, 100));
+    setLogs((prevLogs: LogEntry[]) => {
+      const newLogs = [{ timestamp: new Date(), message, realmId, type }, ...prevLogs].slice(0, 100);
+      // localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(newLogs)); // Logs will be saved in a separate useEffect
+      return newLogs;
+    });
   }, []);
   
    const getMyOwnedRealms = useCallback(async () => {
@@ -87,10 +117,12 @@ export const AutoResourceProducerScript: React.FC = () => {
     for (const realm of ownedRealms) {
       const realmId = realm.entityId;
       log(`Processing Realm ID: ${realmId}`, 'info', realmId);
+      const burnedForLaborList: ResourcesIds[] = []; // Track resources burned for labor in this realm
 
       try {
-        log(`Attempting to produce Labor from various resources using ${percentageForLaborInput * 100}%.`, 'info', realmId);
-        const allResourceIds = Object.values(ResourcesIds).filter(
+        // Part 1: Produce Labor by burning specified resources
+        log(`Phase 1: Producing Labor from raw resources using ${percentageForLaborInput * 100}%.`, 'info', realmId);
+        const resourcesToConsiderForLaborBurn = Object.values(ResourcesIds).filter(
             (id) => typeof id === 'number' && 
                     id !== ResourcesIds.Lords && 
                     id !== ResourcesIds.Labor && 
@@ -110,12 +142,12 @@ export const AutoResourceProducerScript: React.FC = () => {
                     !isNaN(id)
         ) as ResourcesIds[];
 
-        for (const resourceToBurnId of allResourceIds) {
+        for (const resourceToBurnId of resourcesToConsiderForLaborBurn) {
             const laborProductionConfig = configManager.getLaborConfig(resourceToBurnId);
             
             if (laborProductionConfig && laborProductionConfig.laborProductionPerResource > 0) {
                 const resourceBalance = getBalance(realmId, resourceToBurnId, currentDefaultTick, components).balance;
-                const resourceToBurnNat = divideByPrecision(resourceBalance) * percentageForLaborInput;
+                const resourceToBurnNat = Math.floor(divideByPrecision(resourceBalance) * percentageForLaborInput);
 
                 if (resourceToBurnNat > 0) {
                     try {
@@ -127,106 +159,143 @@ export const AutoResourceProducerScript: React.FC = () => {
                             resource_amounts: [multiplyByPrecision(resourceToBurnNat)],
                         });
                         log(`Successfully initiated burning ${resourceToBurnNat.toFixed(2)} of ${ResourcesIds[resourceToBurnId]} for Labor.`, 'success', realmId);
+                        if (!burnedForLaborList.includes(resourceToBurnId)) {
+                            burnedForLaborList.push(resourceToBurnId);
+                        }
                     } catch (e) {
                         log(`Error burning ${ResourcesIds[resourceToBurnId]} for Labor: ${(e as Error).message}`, 'error', realmId);
                     }
                 }
-            } else {
-                // Optional: log if a resource is not configured for labor production
-                // log(`Resource ${ResourcesIds[resourceToBurnId]} (ID: ${resourceToBurnId}) is not configured for labor production or has no output.`, 'info', realmId);
             }
         }
+        log(`Phase 1 (Labor Production) complete for realm ${realmId}. Burned ${burnedForLaborList.length} resource types for labor.`, 'info', realmId);
 
-        const laborBalanceFull = getBalance(realmId, LABOR_RESOURCE_ID, currentDefaultTick, components).balance;
-        const availableLaborNat = divideByPrecision(laborBalanceFull);
-        log(`Available Labor: ${availableLaborNat.toFixed(2)}. Using ${percentageLaborForResources * 100}% for resource production.`, 'info', realmId);
+        // Part 2: Replenish resources that were burned for Labor
+        if (burnedForLaborList.length > 0) {
+            log(`Phase 2: Attempting to replenish ${burnedForLaborList.length} resource types that were burned for Labor.`, 'info', realmId);
+            const laborBalanceFull = getBalance(realmId, LABOR_RESOURCE_ID, currentDefaultTick, components).balance;
+            const availableLaborNat = divideByPrecision(laborBalanceFull);
+            log(`Current available Labor for replenishment: ${availableLaborNat.toFixed(2)} (Using ${percentageLaborForResources * 100}% of this if needed).`, 'info', realmId);
 
-        const producibleResources = Object.keys(configManager.complexSystemResourceInputs)
-          .map(Number)
-          .filter(id => id !== LABOR_RESOURCE_ID && !isNaN(id)); // Ensure it's a number and not Labor itself
-        
-        log(`Found ${producibleResources.length} producible resource types. Evaluating with ${percentageInputForResources * 100}% input usage.`, 'info', realmId);
+            for (const resourceIdToReplenish of burnedForLaborList) {
+                log(`Evaluating replenishment for ${ResourcesIds[resourceIdToReplenish]} (ID: ${resourceIdToReplenish})`, 'info', realmId);
+                let replenishedThisResource = false;
 
-        for (const resourceIdToProduce of producibleResources) {
-          log(`Evaluating production for Resource ID: ${resourceIdToProduce}`, 'info', realmId);
-          let producedThisResource = false;
+                // Attempt 1: Replenish with raw input resources
+                log(`Attempting to replenish ${ResourcesIds[resourceIdToReplenish]} using raw inputs (${percentageInputForResources * 100}% of available).`, 'info', realmId);
+                const inputs = configManager.complexSystemResourceInputs[resourceIdToReplenish];
+                if (inputs && inputs.length > 0) {
+                    let minCyclesAffordableByInputs = Infinity;
+                    let canAffordAllInputs = true;
 
-          const inputs = configManager.complexSystemResourceInputs[resourceIdToProduce];
-          if (inputs && inputs.length > 0) {
-            let minCyclesAffordableByInputs = Infinity;
-            let canAffordAllInputs = true;
+                    for (const input of inputs) {
+                        const inputBalance = getBalance(realmId, input.resource, currentDefaultTick, components).balance;
+                        const availableInputForProdNat = Math.floor(divideByPrecision(inputBalance) * percentageInputForResources);
+                        const cyclesForThisInput = Math.floor(availableInputForProdNat / input.amount);
+                        
+                        if (cyclesForThisInput === 0) {
+                            log(`Cannot afford input ${ResourcesIds[input.resource]} for ${ResourcesIds[resourceIdToReplenish]}. Needed per cycle: ${input.amount}, Available for prod: ${availableInputForProdNat.toFixed(2)}`, 'info', realmId);
+                            canAffordAllInputs = false;
+                            break;
+                        }
+                        minCyclesAffordableByInputs = Math.min(minCyclesAffordableByInputs, cyclesForThisInput);
+                    }
 
-            for (const input of inputs) {
-              const inputBalance = getBalance(realmId, input.resource, currentDefaultTick, components).balance;
-              const availableInputForProdNat = divideByPrecision(inputBalance) * percentageInputForResources;
-              const cyclesForThisInput = Math.floor(availableInputForProdNat / input.amount);
-              
-              if (cyclesForThisInput === 0) {
-                canAffordAllInputs = false;
-                break;
-              }
-              minCyclesAffordableByInputs = Math.min(minCyclesAffordableByInputs, cyclesForThisInput);
-            }
-
-            if (canAffordAllInputs && minCyclesAffordableByInputs > 0 && minCyclesAffordableByInputs !== Infinity) {
-              try {
-                log(`Attempting to produce Resource ${resourceIdToProduce} using raw inputs for ${minCyclesAffordableByInputs} cycles.`, 'info', realmId);
-                await systemCalls.burn_resource_for_resource_production({
-                  signer: account,
-                  from_entity_id: realmId,
-                  produced_resource_types: [resourceIdToProduce],
-                  production_cycles: [minCyclesAffordableByInputs],
-                });
-                log(`Successfully initiated production of Resource ${resourceIdToProduce} for ${minCyclesAffordableByInputs} cycles using raw inputs.`, 'success', realmId);
-                producedThisResource = true;
-              } catch (e) {
-                log(`Error producing Resource ${resourceIdToProduce} with raw inputs: ${(e as Error).message}`, 'error', realmId);
-              }
-            } else {
-               log(`Cannot afford raw inputs for Resource ${resourceIdToProduce} or no cycles possible.`, 'info', realmId);
-            }
-          }
-
-          if (!producedThisResource) {
-            const laborConfig = configManager.getLaborConfig(resourceIdToProduce);
-            if (laborConfig && laborConfig.inputResources.length > 0 && laborConfig.laborBurnPerResourceOutput > 0) {
-               // Assuming the primary labor input is the first one, or specifically Labor.
-               // This logic needs to be robust if multiple inputs are involved in labor-based production.
-               // For simplicity, let's assume laborConfig.laborBurnPerResourceOutput is the key.
-               // And resourceOutputPerInputResources is how much is produced per "labor cycle".
-
-              const laborToSpendForResourceNat = availableLaborNat * percentageLaborForResources;
-              const outputPerCycleNat = laborConfig.resourceOutputPerInputResources; // Amount of target resource per cycle
-              const laborCostPerUnitNat = laborConfig.laborBurnPerResourceOutput; // Labor cost per unit of target resource
-              
-              if (outputPerCycleNat > 0 && laborCostPerUnitNat > 0) {
-                const laborCostPerCycleNat = laborCostPerUnitNat * outputPerCycleNat;
-                const maxCyclesAffordableWithLabor = Math.floor(laborToSpendForResourceNat / laborCostPerCycleNat);
-
-                if (maxCyclesAffordableWithLabor > 0) {
-                  try {
-                    log(`Attempting to produce Resource ${resourceIdToProduce} using Labor for ${maxCyclesAffordableWithLabor} cycles.`, 'info', realmId);
-                    await systemCalls.burn_labor_for_resource_production({
-                      signer: account,
-                      from_entity_id: realmId,
-                      produced_resource_types: [resourceIdToProduce],
-                      production_cycles: [maxCyclesAffordableWithLabor],
-                    });
-                    log(`Successfully initiated production of Resource ${resourceIdToProduce} for ${maxCyclesAffordableWithLabor} cycles using Labor.`, 'success', realmId);
-                  } catch (e) {
-                    log(`Error producing Resource ${resourceIdToProduce} with Labor: ${(e as Error).message}`, 'error', realmId);
-                  }
+                    if (canAffordAllInputs && minCyclesAffordableByInputs > 0 && minCyclesAffordableByInputs !== Infinity) {
+                        try {
+                            log(`Replenishing ${ResourcesIds[resourceIdToReplenish]} using raw inputs for ${minCyclesAffordableByInputs} cycles.`, 'info', realmId);
+                            await systemCalls.burn_resource_for_resource_production({
+                                signer: account,
+                                from_entity_id: realmId,
+                                produced_resource_types: [resourceIdToReplenish],
+                                production_cycles: [minCyclesAffordableByInputs],
+                            });
+                            log(`Successfully initiated replenishment of ${ResourcesIds[resourceIdToReplenish]} for ${minCyclesAffordableByInputs} cycles using raw inputs.`, 'success', realmId);
+                            replenishedThisResource = true;
+                        } catch (e) {
+                            log(`Error replenishing ${ResourcesIds[resourceIdToReplenish]} with raw inputs: ${(e as Error).message}`, 'error', realmId);
+                        }
+                    } else {
+                        log(`Cannot afford all raw inputs for ${ResourcesIds[resourceIdToReplenish]} or no cycles possible for replenishment.`, 'info', realmId);
+                    }
                 } else {
-                  log(`Not enough Labor or zero cycles possible for Resource ${resourceIdToProduce}. Labor to spend: ${laborToSpendForResourceNat.toFixed(2)}, Cost per cycle: ${laborCostPerCycleNat.toFixed(2)}`, 'info', realmId);
+                    log(`No complex input recipe found for ${ResourcesIds[resourceIdToReplenish]}.`, 'info', realmId);
                 }
-              } else {
-                 log(`Labor production config issue for Resource ${resourceIdToProduce} (output: ${outputPerCycleNat}, cost: ${laborCostPerUnitNat})`, 'info', realmId);
-              }
-            } else {
-              log(`No suitable Labor production config found for Resource ID: ${resourceIdToProduce}`, 'info', realmId);
+
+                // Attempt 2: Replenish with Labor (if not already replenished with raw inputs)
+                if (!replenishedThisResource) {
+                    log(`Attempting to replenish ${ResourcesIds[resourceIdToReplenish]} using Labor.`, 'info', realmId);
+                    const laborConfigForReplenish = configManager.getLaborConfig(resourceIdToReplenish);
+                    if (laborConfigForReplenish && laborConfigForReplenish.inputResources.length > 0 && laborConfigForReplenish.laborBurnPerResourceOutput >= 0) { // Allow 0 labor burn if other simple inputs exist
+                        // Check if this resource *can* be produced by simple inputs (which typically includes labor)
+                        if (laborConfigForReplenish.resourceOutputPerInputResources > 0) {
+                            const laborToSpendForResourceNat = Math.floor(availableLaborNat * percentageLaborForResources);
+                            const outputPerCycleNat = laborConfigForReplenish.resourceOutputPerInputResources;
+                            
+                            // Calculate actual labor cost per cycle from inputResources list
+                            let actualLaborCostPerCycleNat = 0;
+                            let hasLaborInput = false;
+                            for(const inputResource of laborConfigForReplenish.inputResources) {
+                                if (inputResource.resource === LABOR_RESOURCE_ID) {
+                                    actualLaborCostPerCycleNat = inputResource.amount; // Assumes amount is in natural units
+                                    hasLaborInput = true;
+                                    break;
+                                }
+                            }
+
+                            // If recipe doesn't directly require labor but is simple, we might not proceed, or assume 0 labor cost if appropriate.
+                            // For now, we proceed if there's a labor input defined or if laborBurnPerResourceOutput is explicit (though direct input is better)
+                            // The field `laborBurnPerResourceOutput` might be an aggregate or average, best to use specific input costs if available.
+                            // We will prioritize direct labor input if specified in `inputResources`.
+
+                            if (hasLaborInput || laborConfigForReplenish.laborBurnPerResourceOutput > 0) {
+                                // If direct labor input not found, fall back to laborBurnPerResourceOutput (less precise)
+                                if (!hasLaborInput && laborConfigForReplenish.laborBurnPerResourceOutput > 0) {
+                                     actualLaborCostPerCycleNat = laborConfigForReplenish.laborBurnPerResourceOutput * outputPerCycleNat;
+                                     log(`Using calculated labor cost per cycle for ${ResourcesIds[resourceIdToReplenish]}: ${actualLaborCostPerCycleNat.toFixed(2)}`, 'info', realmId);
+                                }
+
+                                if (actualLaborCostPerCycleNat === 0 && !hasLaborInput) {
+                                     log(`Resource ${ResourcesIds[resourceIdToReplenish]} has a simple recipe but does not explicitly consume Labor. Skipping labor-based replenishment unless other simple inputs are handled.`, 'info', realmId);
+                                } else {
+                                    const maxCyclesAffordableWithLabor = actualLaborCostPerCycleNat > 0 
+                                        ? Math.floor(laborToSpendForResourceNat / actualLaborCostPerCycleNat)
+                                        : (laborToSpendForResourceNat > 0 ? Infinity : 0); // If labor cost is 0, can do infinite cycles if any labor is to be spent (conceptually)
+
+                                    if (maxCyclesAffordableWithLabor > 0 && maxCyclesAffordableWithLabor !== Infinity) {
+                                        try {
+                                            log(`Replenishing ${ResourcesIds[resourceIdToReplenish]} using Labor for ${maxCyclesAffordableWithLabor} cycles. Labor to spend: ${laborToSpendForResourceNat.toFixed(2)}, Cost/cycle: ${actualLaborCostPerCycleNat.toFixed(2)}`, 'info', realmId);
+                                            await systemCalls.burn_labor_for_resource_production({
+                                                signer: account,
+                                                from_entity_id: realmId,
+                                                produced_resource_types: [resourceIdToReplenish],
+                                                production_cycles: [maxCyclesAffordableWithLabor],
+                                            });
+                                            log(`Successfully initiated replenishment of ${ResourcesIds[resourceIdToReplenish]} for ${maxCyclesAffordableWithLabor} cycles using Labor.`, 'success', realmId);
+                                        } catch (e) {
+                                            log(`Error replenishing ${ResourcesIds[resourceIdToReplenish]} with Labor: ${(e as Error).message}`, 'error', realmId);
+                                        }
+                                    } else if (maxCyclesAffordableWithLabor === Infinity && laborConfigForReplenish.inputResources.every(inp => inp.resource !== LABOR_RESOURCE_ID)) {
+                                        log(`Resource ${ResourcesIds[resourceIdToReplenish]} simple recipe has no direct labor cost, but other simple inputs may be required. This path needs review if those inputs aren't covered.`, 'info', realmId);
+                                    } else {
+                                        log(`Not enough Labor or zero cycles for replenishment of ${ResourcesIds[resourceIdToReplenish]} with Labor. Labor to spend: ${laborToSpendForResourceNat.toFixed(2)}, Cost/cycle: ${actualLaborCostPerCycleNat.toFixed(2)}`, 'info', realmId);
+                                    }
+                                }
+                            } else {
+                                log(`Resource ${ResourcesIds[resourceIdToReplenish]} does not have a primary Labor consumption pathway in its simple recipe according to inputResources and laborBurnPerResourceOutput.`, 'info', realmId);
+                            }
+                        } else {
+                            log(`Simple production recipe for ${ResourcesIds[resourceIdToReplenish]} has zero output per cycle. Cannot replenish with labor.`, 'info', realmId);
+                        }
+                    } else {
+                        log(`No suitable simple (Labor-based) production config found for replenishment of Resource ID: ${resourceIdToReplenish}`, 'info', realmId);
+                    }
+                }
             }
-          }
+        } else {
+            log('Phase 2: No resources were burned for Labor in this cycle, so no specific replenishment attempted.', 'info', realmId);
         }
+
       } catch (realmError) {
         log(`Unhandled error processing realm ${realmId}: ${(realmError as Error).message}`, 'error', realmId);
       }
@@ -236,6 +305,56 @@ export const AutoResourceProducerScript: React.FC = () => {
     setIsLoading(false);
   }, [account, components, systemCalls, log, getMyOwnedRealms, productionIntervalMs, percentageForLaborInput, percentageInputForResources, percentageLaborForResources]);
 
+  useEffect(() => {
+    // Load logs from localStorage on mount
+    const savedLogs = localStorage.getItem(STORAGE_KEY_LOGS);
+    if (savedLogs) {
+      try {
+        const parsedLogs = JSON.parse(savedLogs).map((logEntry: RawLogEntry) => ({
+          ...logEntry,
+          timestamp: new Date(logEntry.timestamp), // Rehydrate Date objects
+        }));
+        setLogs(parsedLogs);
+      } catch (error) {
+        console.error("Failed to parse logs from localStorage", error);
+        localStorage.removeItem(STORAGE_KEY_LOGS); // Clear corrupted logs
+      }
+    }
+
+    // Load isRunning state from localStorage on mount
+    const savedIsRunning = localStorage.getItem(STORAGE_KEY_IS_RUNNING);
+    if (savedIsRunning) {
+      setIsRunning(savedIsRunning === 'true');
+    }
+  }, []); // Empty dependency array ensures this runs only once on mount
+
+  // Effect to save logs to localStorage whenever they change
+  useEffect(() => {
+    if (logs.length > 0 || localStorage.getItem(STORAGE_KEY_LOGS)) { // Save if logs exist or if there were previous logs to clear
+        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(logs.map((logEntry: LogEntry) => ({
+            ...logEntry,
+            timestamp: logEntry.timestamp.toISOString(), // Store dates as ISO strings
+        }))));
+    }
+  }, [logs]);
+  
+  // Effects to save settings to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_INTERVAL, productionIntervalMins.toString());
+  }, [productionIntervalMins]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_PERCENT_LABOR_INPUT, percentageForLaborInput.toString());
+  }, [percentageForLaborInput]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_PERCENT_INPUT_RESOURCES, percentageInputForResources.toString());
+  }, [percentageInputForResources]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY_PERCENT_LABOR_RESOURCES, percentageLaborForResources.toString());
+  }, [percentageLaborForResources]);
+  
   useEffect(() => {
     let intervalId: ReturnType<typeof setInterval> | undefined;
     if (isRunning) {
@@ -257,7 +376,11 @@ export const AutoResourceProducerScript: React.FC = () => {
   }, [isRunning, processProductionCycle, log, productionIntervalMs]);
 
   const toggleRunning = () => {
-    setIsRunning((prev: boolean) => !prev);
+    setIsRunning((prev: boolean) => {
+      const newIsRunning = !prev;
+      localStorage.setItem(STORAGE_KEY_IS_RUNNING, newIsRunning.toString());
+      return newIsRunning;
+    });
   };
   
   const handleSliderChange = (setter: React.Dispatch<React.SetStateAction<number>>, isPercentage: boolean) => (e: ChangeEvent<HTMLInputElement>) => {
