@@ -40,7 +40,7 @@ export const DevToolsPanel: React.FC = () => {
   const panelStyle: React.CSSProperties = {
     position: 'fixed',
     top: '20px',
-    left: '50%',
+    left: '75%',
     transform: 'translateX(-50%)',
     width: '400px',
     maxHeight: '80vh',
@@ -58,7 +58,7 @@ export const DevToolsPanel: React.FC = () => {
   const minimizedButtonStyle: React.CSSProperties = {
     position: 'fixed',
     top: '20px',
-    left: '50%',
+    left: '75%',
     transform: 'translateX(-50%)',
     padding: '10px 20px',
     backgroundColor: 'rgba(50, 50, 50, 0.9)',
