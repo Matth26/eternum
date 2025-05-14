@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 //import { BatchRealmsPerZoneScript } from './BatchRealmsPerZoneScript'; // Import the new script
+import { AutoResourceProducerScript } from './AutoResourceProducerScript'; // Import the new auto resource producer script
 import { BuildBuildingsScript } from './BuildBuildingsScript'; // Import the new script
+import { CreateAttackingArmyScript } from './CreateAttackingArmyScript'; // Import the new army script
 import { GetMyRealmsScript } from './GetMyRealmsScript'; // Import the new script
 import { TransferResourcesScript } from './TransferResourcesScript'; // Import the new script
 
 // Placeholder for where your script components will be imported
 // import { BatchRealmSettleScript } from './BatchRealmSettleScript';
 
-type ScriptId = 'getAllLocations' | 'batchRealmsPerZone' | 'getMyRealms' | 'transferResources' | 'getBaseMapTiles' | 'buildBuildings' | 'depositAllTransfers' | null; // Added 'depositAllTransfers'
+type ScriptId = 'getAllLocations' | 'batchRealmsPerZone' | 'getMyRealms' | 'transferResources' | 'getBaseMapTiles' | 'buildBuildings' | 'depositAllTransfers' | 'createAttackingArmies' | 'autoResourceProducer' | null; // Added 'autoResourceProducer'
 
 interface Script {
   id: ScriptId;
@@ -29,6 +31,8 @@ export const DevToolsPanel: React.FC = () => {
     { id: 'getMyRealms', name: 'Get owned structures id', description: 'Fetches and displays all structures (realms, banks, villages) owned by the player.', component: GetMyRealmsScript }, // Add the new script here
     { id: 'buildBuildings', name: 'Create buildings', description: 'Build multiple buildings on specified realms using a JSON input.', component: BuildBuildingsScript },
     { id: 'transferResources', name: 'Transfer and deposit', description: 'Transfer resources between two realms using a JSON input.', component: TransferResourcesScript }, // Add the new script here
+    { id: 'createAttackingArmies', name: 'Create All Realm Armies', description: 'Creates an attacking army in each realm with available troops.', component: CreateAttackingArmyScript },
+    { id: 'autoResourceProducer', name: 'Auto Resource Producer', description: 'Automatically produces Labor and other resources in all realms.', component: AutoResourceProducerScript },
     //{ id: 'getBaseMapTiles', name: 'Get Base Map Tiles', description: 'Fetches and displays base map tiles from the backend.', component: GetBaseMapTilesScript },
     //{ id: 'depositAllTransfers', name: 'Deposit All Transfers', description: 'Finds and deposits all resource transfers ready to be offloaded at player structures.', component: DepositAllTransfersScript },
     // Add other scripts here
@@ -40,7 +44,7 @@ export const DevToolsPanel: React.FC = () => {
   const panelStyle: React.CSSProperties = {
     position: 'fixed',
     top: '20px',
-    left: '75%',
+    left: '65%',
     transform: 'translateX(-50%)',
     width: '400px',
     maxHeight: '80vh',
@@ -58,7 +62,7 @@ export const DevToolsPanel: React.FC = () => {
   const minimizedButtonStyle: React.CSSProperties = {
     position: 'fixed',
     top: '20px',
-    left: '75%',
+    left: '65%',
     transform: 'translateX(-50%)',
     padding: '10px 20px',
     backgroundColor: 'rgba(50, 50, 50, 0.9)',
