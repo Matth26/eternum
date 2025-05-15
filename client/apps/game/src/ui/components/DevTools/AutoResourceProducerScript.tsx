@@ -2,7 +2,8 @@ import { getBlockTimestamp } from '@/utils/timestamp';
 import {
   configManager,
   divideByPrecision,
-  getBalance
+  getBalance,
+  getRealmInfo
 } from '@bibliothecadao/eternum';
 import { useDojo } from '@bibliothecadao/react';
 import { ID, ResourcesIds, StructureType } from '@bibliothecadao/types'; // Corrected import path
@@ -90,11 +91,14 @@ export const AutoResourceProducerScript: React.FC = () => {
         const structure = getComponentValue(components.Structure, entityId); // Corrected usage
         if (structure && structure.owner && BigInt(structure.owner) === BigInt(account.address)) {
             if (Number(structure.category) === StructureType.Realm) {
-                 ownedRealms.push({
-                    name: `Realm ${structure.entity_id}`, 
-                    entityId: structure.entity_id,
-                    coord: { x: structure.base?.coord_x || 0, y: structure.base?.coord_y || 0 }, 
-                });
+              const realmInfo = getRealmInfo(entityId, components);
+              // if realmInfo defined, use name from realmInfo, else use name from structure
+              const name = realmInfo ? realmInfo.name : `Realm ${structure.entity_id}`;
+              ownedRealms.push({
+                name,
+                entityId: structure.entity_id,  
+                coord: { x: structure.base?.coord_x || 0, y: structure.base?.coord_y || 0 },
+              });
             }
         }
     }
