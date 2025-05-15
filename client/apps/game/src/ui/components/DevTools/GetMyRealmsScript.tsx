@@ -114,7 +114,7 @@ export const GetMyRealmsScript: React.FC<GetMyRealmsScriptProps> = ({ log }) => 
   };
   const textAreaStyle: React.CSSProperties = {
     width: '100%',
-    minHeight: '80px',
+    minHeight: '5%',
     marginTop: '6px',
     padding: '6px',
     border: '1px solid #777',

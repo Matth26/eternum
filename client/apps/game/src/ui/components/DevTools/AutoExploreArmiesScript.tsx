@@ -2,11 +2,8 @@ import { useDojo, useExplorersByStructure, usePlayerStructures } from '@biblioth
 import { getTilesFromToriiClient } from "@bibliothecadao/torii-client";
 import { getDirectionBetweenAdjacentHexes, getNeighborHexes, ID, StructureType } from '@bibliothecadao/types';
 import { getComponentValue, Has, runQuery } from '@dojoengine/recs';
-import React, { useCallback, useState } from 'react';
-
-const ARMY_MIN_SIZE = 2000;
-const ARMY_REINFORCE_AMOUNT = 1900;
-const MAP_CENTER = { x: 0, y: 0 };
+import React, { useCallback, useEffect, useState } from 'react';
+import { normalizedToContractCoords } from '../settlement/settlement-utils';
 
 // Add these style variables near the top, after imports
 const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '2px', fontSize: '0.9em' };
@@ -17,14 +14,32 @@ interface AutoExploreArmiesScriptProps {
   log: (message: string, type?: 'info' | 'error' | 'success', script?: string) => void;
 }
 
-export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = ({ log }) => {
+export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = ({ log }: AutoExploreArmiesScriptProps) => {
   const {
     account: { account },
     setup: { components, systemCalls, network: { toriiClient } },
   } = useDojo();
 
   const [isLoading, setIsLoading] = useState(false);
-  const [exploreDirection, setExploreDirection] = useState<'center' | 'north' | 'south' | 'east' | 'west'>('center');
+  const [inputX, setInputX] = useState<string>("");
+  const [inputY, setInputY] = useState<string>("");
+
+  // Persist X and Y to localStorage
+  useEffect(() => {
+    const savedX = localStorage.getItem("autoExploreInputX");
+    const savedY = localStorage.getItem("autoExploreInputY");
+    if (savedX !== null) setInputX(savedX);
+    if (savedY !== null) setInputY(savedY);
+  }, []);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      localStorage.setItem("autoExploreInputX", inputX);
+      localStorage.setItem("autoExploreInputY", inputY);
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [inputX, inputY]);
 
   // Use the hook to get all player structures
   const playerStructures = usePlayerStructures();
@@ -43,6 +58,9 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
     }
     setIsLoading(true);
     try {
+      // Get contract coordinates from user input
+      const { x: targetX, y: targetY } = normalizedToContractCoords(inputX, inputY);
+      log(`Target contract coordinates: (${targetX}, ${targetY})`, 'info', 'AutoExploreArmies');
       // 1. Fetch all owned realms
       const ownedRealms: { entityId: ID; coord: { x: number; y: number }; name: string }[] = [];
       const structureEntities = runQuery([Has(components.Structure)]);
@@ -63,13 +81,12 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
         setIsLoading(false);
         return;
       }
-      // 2. Use allPlayerArmies for further logic
       if (allPlayerArmies.length === 0) {
         log('No player armies found.', 'error', 'AutoExploreArmies');
         setIsLoading(false);
         return;
       }
-      // --- NEW: Gather all unique neighbor positions ---
+      // --- Gather all unique neighbor positions ---
       const allNeighborPositions: { col: number; row: number }[] = [];
       for (const army of allPlayerArmies) {
         const neighbors = getNeighborHexes(army.position.x, army.position.y);
@@ -89,22 +106,13 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
       for (const tile of tiles) {
         tileMap.set(`${tile.col},${tile.row}`, tile);
       }
-      // 4. For each army, find empty adjacent tile closest to center and explore
+      // 4. For each army, find empty adjacent tile closest to target and explore
       const exploredTargets = new Set<string>();
       for (const army of allPlayerArmies) {
-        let neighbors = getNeighborHexes(army.position.x, army.position.y);
-        if (exploreDirection !== 'center') {
-          neighbors = neighbors.filter((neighbor: any) => {
-            if (exploreDirection === 'north') return neighbor.row > army.position.y;
-            if (exploreDirection === 'south') return neighbor.row < army.position.y;
-            if (exploreDirection === 'east') return neighbor.col > army.position.x;
-            if (exploreDirection === 'west') return neighbor.col < army.position.x;
-            return true;
-          });
-        }
+        const neighbors = getNeighborHexes(army.position.x, army.position.y);
+        // First pass: unexplored
         let bestTile = null;
         let bestDist = Infinity;
-        // First pass: unexplored
         for (const neighbor of neighbors) {
           let occupied = false;
           for (const otherArmy of allPlayerArmies) {
@@ -121,12 +129,10 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
               }
             }
           }
-          if (!occupied) {
-            const tile = tileMap.get(`${neighbor.col},${neighbor.row}`);
-            if (tile && tile.biome !== 0) {
-              occupied = true;
-              // skip for first pass
-            }
+          const tile = tileMap.get(`${neighbor.col},${neighbor.row}`);
+          if (!occupied && tile && tile.biome !== 0) {
+            occupied = true;
+            // skip for first pass
           }
           if (!occupied) {
             const targetKey = `${neighbor.col},${neighbor.row}`;
@@ -135,7 +141,7 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
             }
           }
           if (!occupied) {
-            const dist = Math.abs(neighbor.col - MAP_CENTER.x) + Math.abs(neighbor.row - MAP_CENTER.y);
+            const dist = Math.abs(neighbor.col - targetX) + Math.abs(neighbor.row - targetY);
             if (dist < bestDist) {
               bestDist = dist;
               bestTile = neighbor;
@@ -166,7 +172,7 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
             if (!occupied && tile && tile.biome !== 0 && tile.occupier_id === 0) {
               const targetKey = `${neighbor.col},${neighbor.row}`;
               if (!exploredTargets.has(targetKey)) {
-                const dist = Math.abs(neighbor.col - MAP_CENTER.x) + Math.abs(neighbor.row - MAP_CENTER.y);
+                const dist = Math.abs(neighbor.col - targetX) + Math.abs(neighbor.row - targetY);
                 if (dist < fallbackDist) {
                   fallbackDist = dist;
                   fallbackTile = neighbor;
@@ -208,7 +214,7 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
       log(`Unexpected error: ${(error as Error).message}`, 'error', 'AutoExploreArmies');
     }
     setIsLoading(false);
-  }, [account, components, systemCalls, toriiClient, log, allPlayerArmies, playerStructures, exploreDirection]);
+  }, [account, components, systemCalls, toriiClient, log, allPlayerArmies, playerStructures, inputX, inputY]);
 
   const buttonStyle: React.CSSProperties = {
     padding: '10px 15px',
@@ -224,15 +230,44 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
 
   return (
     <div style={{ fontFamily: 'monospace', padding: 0, border: 'none', margin: 0 }}>
-      <div style={{ marginBottom: '10px' }}>
-        <label style={labelStyle}>Explore direction:
-          <select value={exploreDirection} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setExploreDirection(e.target.value as any)} style={selectStyle}>
-            <option value="center" style={optionStyle}>Center (all)</option>
-            <option value="north" style={optionStyle}>North</option>
-            <option value="south" style={optionStyle}>South</option>
-            <option value="east" style={optionStyle}>East</option>
-            <option value="west" style={optionStyle}>West</option>
-          </select>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 24, marginBottom: '16px' }}>
+        <label style={{ ...labelStyle, marginBottom: 0 }}>
+          <span style={{ marginRight: 6 }}>Target X:</span>
+          <input
+            type="number"
+            value={inputX}
+            onChange={e => setInputX(e.target.value)}
+            style={{
+              background: '#222',
+              color: '#fff',
+              border: '1px solid #444',
+              borderRadius: 4,
+              padding: '4px 8px',
+              width: 80,
+              fontSize: '1em',
+              marginLeft: 0,
+            }}
+            placeholder="e.g. -72"
+          />
+        </label>
+        <label style={{ ...labelStyle, marginBottom: 0 }}>
+          <span style={{ marginRight: 6 }}>Target Y:</span>
+          <input
+            type="number"
+            value={inputY}
+            onChange={e => setInputY(e.target.value)}
+            style={{
+              background: '#222',
+              color: '#fff',
+              border: '1px solid #444',
+              borderRadius: 4,
+              padding: '4px 8px',
+              width: 80,
+              fontSize: '1em',
+              marginLeft: 0,
+            }}
+            placeholder="e.g. 15"
+          />
         </label>
       </div>
       <button

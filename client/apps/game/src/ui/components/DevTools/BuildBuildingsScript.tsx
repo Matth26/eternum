@@ -376,7 +376,7 @@ export const BuildBuildingsScript: React.FC = () => {
   };
   const textAreaStyle: React.CSSProperties = {
     width: '100%',
-    minHeight: '80px',
+    minHeight: '5%',
     margin: '6px 0',
     padding: '6px',
     border: '1px solid #777',

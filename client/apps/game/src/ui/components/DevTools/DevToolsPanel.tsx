@@ -82,26 +82,18 @@ export const CompanionUI: React.FC = () => {
       ],
     },
     {
-      name: 'Settings',
+      name: 'Info',
       scripts: [
-        { name: 'Export and import settings', component: () => (
-          <div style={{ fontSize: '0.9em', color: '#ccc', fontFamily: 'monospace' }}>
-            <div style={{ marginBottom: 8 }}>Export and import your settings to a JSON file.</div>
-            <div style={{ display: 'flex', flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-              <button
-                style={{ padding: '6px 12px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.95em' }}
-                onClick={exportSettings}
-              >
-                Export Settings
-              </button>
-              <button
-                style={{ padding: '6px 12px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.95em' }}
-                onClick={handleImportClick}
-              >
-                Import Settings
-              </button>
-              <input ref={fileInputRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={importSettings} />
-            </div>
+        { name: 'About', component: () => (
+          <div style={{ fontSize: '0.95em', color: '#ccc', fontFamily: 'monospace' }}>
+            <ul style={{ margin: 0, paddingLeft: 18, color: '#aaa', fontSize: '0.92em' }}>
+              <li><b>Get owned structures id</b>: Fetches your owned Realms, Banks, and Villages as JSON.</li>
+              <li><b>Transfer and deposit</b>: Batch transfer resources between realms and deposit arrivals.</li>
+              <li><b>Auto Resource Producer</b>: Prepares and executes resource production plans for your realms.</li>
+              <li><b>Create buildings</b>: Batch create buildings on your realms using JSON input.</li>
+              <li><b>Auto Explore Armies</b>: Moves armies to explore adjacent tiles automatically.</li>
+              <li><b>Create All Realm Armies</b>: Creates armies for all your realms if resources are available.</li>
+            </ul>
           </div>
         ) },
         { name: 'Resource Types', component: () => (
@@ -122,26 +114,14 @@ export const CompanionUI: React.FC = () => {
             <div style={{ marginTop: 8, color: '#aaa', fontSize: '0.85em' }}>Use these building names in the JSON for build scripts.</div>
           </div>
         ) },
-        { name: 'About Scripts', component: () => (
-          <div style={{ fontSize: '0.95em', color: '#ccc', fontFamily: 'monospace' }}>
-            <ul style={{ margin: 0, paddingLeft: 18, color: '#aaa', fontSize: '0.92em' }}>
-              <li><b>Get owned structures id</b>: Fetches your owned Realms, Banks, and Villages as JSON.</li>
-              <li><b>Transfer and deposit</b>: Batch transfer resources between realms and deposit arrivals.</li>
-              <li><b>Auto Resource Producer</b>: Prepares and executes resource production plans for your realms.</li>
-              <li><b>Create buildings</b>: Batch create buildings on your realms using JSON input.</li>
-              <li><b>Auto Explore Armies</b>: Moves armies to explore adjacent tiles automatically.</li>
-              <li><b>Create All Realm Armies</b>: Creates armies for all your realms if resources are available.</li>
-            </ul>
-          </div>
-        ) },
       ],
     },
   ];
 
   const panelStyle: React.CSSProperties = {
     position: 'fixed',
-    top: '2%',
-    left: '60%',
+    top: '1%',
+    left: '65%',
     transform: 'translateX(-50%)',
     width: '40%',
     height: '90%',
@@ -165,8 +145,8 @@ export const CompanionUI: React.FC = () => {
 
   const minimizedButtonStyle: React.CSSProperties = {
     position: 'fixed',
-    top: '2%',
-    left: '60%',
+    top: '1%',
+    left: '65%',
     transform: 'translateX(-50%)',
     padding: '12px 28px',
     backgroundColor: 'rgba(40, 40, 40, 0.98)',
@@ -251,8 +231,8 @@ export const CompanionUI: React.FC = () => {
                     <div key={script.name} className="bg-[#292929] rounded-lg p-4 shadow">
                       {/* Script title */}
                       <div style={{ fontWeight: 600, fontSize: '1.08em', color: '#fff', marginBottom: 8 }}>{script.name}</div>
-                      {/* Pass log and setLogs as props to each script */}
-                      <script.component log={log} logs={logs} setLogs={setLogs} />
+                      {/* Pass log as prop to each script */}
+                      <script.component log={log} />
                     </div>
                   ))}
                 </div>
@@ -266,12 +246,21 @@ export const CompanionUI: React.FC = () => {
       <div style={{ padding: '0 18px 12px 18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
           <label style={{ fontWeight: 500, color: '#aaa', marginBottom: 0, display: 'block', fontSize: '1em' }}>Logs</label>
+          <div style={{ display: 'flex', gap: 8 }}>
             <button 
-            onClick={() => setShowLogs(v => !v)}
-            style={{ background: '#222', color: '#aaa', border: '1px solid #444', borderRadius: 4, padding: '4px 12px', cursor: 'pointer', fontSize: '0.95em', marginLeft: 12 }}
+              onClick={() => setShowLogs(v => !v)}
+              style={{ background: '#222', color: '#aaa', border: '1px solid #444', borderRadius: 4, padding: '4px 12px', cursor: 'pointer', fontSize: '0.95em' }}
             >
-            {showLogs ? 'Hide Logs' : 'Show Logs'}
+              {showLogs ? 'Hide Logs' : 'Show Logs'}
             </button>
+            <button
+              onClick={() => { setLogs([]); localStorage.removeItem('autoResourceProducer_logs'); }}
+              style={{ background: '#dc3545', color: '#fff', border: '1px solid #444', borderRadius: 4, padding: '4px 12px', cursor: 'pointer', fontSize: '0.95em' }}
+              disabled={logs.length === 0}
+            >
+              Clear Logs
+            </button>
+          </div>
         </div>
         {showLogs && (
           <div style={{

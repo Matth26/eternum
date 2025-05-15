@@ -1,11 +1,9 @@
+import Button from "@/ui/elements/button";
 import { ResourceArrivalManager } from "@bibliothecadao/eternum";
 import { useDojo, usePlayerStructures } from "@bibliothecadao/react";
 import { Resource, RESOURCE_PRECISION, ResourceArrivalInfo, StructureType } from "@bibliothecadao/types";
 import { getComponentValue } from "@dojoengine/recs";
 import React, { useCallback, useEffect, useState } from 'react';
-
-// Assuming a system call like transfer_resources_between_entities exists.
-// Adjust if your system call has a different name or signature.
 
 // IMPORTANT: Populate this with your game's actual resource names and IDs!
 const RESOURCE_NAME_TO_ID: Record<string, number> = {
@@ -53,13 +51,12 @@ interface ResourceTransferItem {
   amount: number;
 }
 
-interface TransferOperation { // Renamed from TransferInput for clarity
+interface TransferOperation {
   fromRealmEntityId: string;
   toRealmEntityId: string;
   resources: ResourceTransferItem[];
 }
 
-// Updated to expect an array of transfer operations
 type TransferInputArray = TransferOperation[];
 
 const EXAMPLE_JSON_INPUT = JSON.stringify(
@@ -82,26 +79,19 @@ const EXAMPLE_JSON_INPUT = JSON.stringify(
   2
 );
 
-interface TransferResourcesScriptProps {
-  log: (message: string, type?: 'info' | 'error' | 'success', script?: string) => void;
-}
-
-export const TransferResourcesScript: React.FC<TransferResourcesScriptProps> = ({ log }) => {
+export const TransferResourcesScript: React.FC = () => {
   const {
     account: { account },
     setup: { components, systemCalls },
   } = useDojo();
 
-  // localStorage key for persisting JSON input
   const LOCAL_STORAGE_KEY = 'devtools_transferResourcesJsonInput';
-
   const [jsonDataInput, setJsonDataInput] = useState<string>(() => {
     const savedJson = localStorage.getItem(LOCAL_STORAGE_KEY);
     return savedJson || EXAMPLE_JSON_INPUT;
   });
   const [isLoading, setIsLoading] = useState(false);
 
-  // --- Logic from DepositAllTransfersScript --- 
   const playerStructures: any[] = usePlayerStructures();
   const playerRealms = playerStructures.filter(
     (structure: any) => structure.category === StructureType.Realm,
@@ -109,16 +99,16 @@ export const TransferResourcesScript: React.FC<TransferResourcesScriptProps> = (
 
   const executeDeposits = async () => {
     if (!account) {
-      log("Account not available for deposits.", 'error', 'TransferResources');
+      console.error("Account not available for deposits.");
       return;
     }
     setIsLoading(true);
-    log("Starting deposit all process...", 'info', 'TransferResources');
+    console.log("Starting deposit all process...");
     let totalSuccessCount = 0;
     let totalErrorCount = 0;
 
     if (!components.ResourceArrival) {
-        log("ResourceArrival component not found in setup.", 'error', 'TransferResources');
+        console.error("ResourceArrival component not found in setup.");
         setIsLoading(false);
         return;
     }
@@ -169,10 +159,10 @@ export const TransferResourcesScript: React.FC<TransferResourcesScriptProps> = (
                         try {
                             const manager = new ResourceArrivalManager(components, systemCalls, arrivalInfo);
                             await manager.offload(account, arrivalInfo.resources.length);
-                            log(`Successfully offloaded for realm ${realmEntityId}, day ${arrivalInfo.day}, slot ${arrivalInfo.slot}.`, 'success', 'TransferResources');
+                            console.log(`Successfully offloaded for realm ${realmEntityId}, day ${arrivalInfo.day}, slot ${arrivalInfo.slot}.`);
                             totalSuccessCount++;
                         } catch (e: any) {
-                            log(`Error offloading for realm ${realmEntityId}, day ${arrivalInfo.day}, slot ${arrivalInfo.slot}: ${e.message}`, 'error', 'TransferResources');
+                            console.error(`Error offloading for realm ${realmEntityId}, day ${arrivalInfo.day}, slot ${arrivalInfo.slot}: ${e.message}`);
                             totalErrorCount++;
                         }
                     }
@@ -180,23 +170,21 @@ export const TransferResourcesScript: React.FC<TransferResourcesScriptProps> = (
             }
         }
     }
-    log(`Deposit all process finished. Successes: ${totalSuccessCount}, Errors: ${totalErrorCount}.`, 'info', 'TransferResources');
+    console.log(`Deposit all process finished. Successes: ${totalSuccessCount}, Errors: ${totalErrorCount}.`);
     setIsLoading(false);
   };
-  // --- End of logic from DepositAllTransfersScript ---
 
-  // Save to localStorage whenever jsonDataInput changes
   useEffect(() => {
     localStorage.setItem(LOCAL_STORAGE_KEY, jsonDataInput);
   }, [jsonDataInput]);
 
   const handleTransfer = useCallback(async () => {
     if (!account || !account.address) {
-      log("Account not available for transfers.", 'error', 'TransferResources');
+      console.error("Account not available for transfers.");
       return;
     }
     if (!systemCalls?.send_resources_multiple) {
-      log("System call send_resources_multiple not available.", 'error', 'TransferResources');
+      console.error("System call send_resources_multiple not available.");
       return;
     }
     let parsedInputArray: TransferInputArray;
@@ -238,8 +226,7 @@ export const TransferResourcesScript: React.FC<TransferResourcesScriptProps> = (
       setIsLoading(true);
 
       const callsForSystem = parsedInputArray.map((operation, opIndex) => {
-        log(`TransferResourcesScript: Processing operation ${opIndex}: ${JSON.stringify(operation, null, 2)}`, 'info', 'TransferResources');
-        // ... (initial validation for operation properties) ...
+        console.log(`TransferResourcesScript: Processing operation ${opIndex}:`, JSON.stringify(operation, null, 2));
         if (
           !operation.fromRealmEntityId ||
           !operation.toRealmEntityId ||
@@ -252,90 +239,107 @@ export const TransferResourcesScript: React.FC<TransferResourcesScriptProps> = (
                                 typeof r.amount !== 'number' ||
                                 r.amount <= 0;
               if (isInvalid) {
-                log(`Invalid resource at index ${rIndex} in operation ${opIndex}.`, 'error', 'TransferResources');
+                console.error(`TransferResourcesScript: Invalid resource item at operation ${opIndex}, resource ${rIndex}:`, JSON.stringify(r, null, 2));
+                console.error(`Details - resourceName type: ${typeof r.resourceName}, name valid: ${!!RESOURCE_NAME_TO_ID[r.resourceName]}, amount type: ${typeof r.amount}, amount > 0: ${r.amount > 0}`);
               }
               return isInvalid;
             }
           )
         ) {
-          return null;
+          throw new Error(`Invalid data in operation for sender ${operation.fromRealmEntityId}. Please check all fields.`);
         }
-        return {
-          from_entity_id: operation.fromRealmEntityId,
-          to_entity_id: operation.toRealmEntityId,
-          resource_types: operation.resources.map(r => RESOURCE_NAME_TO_ID[r.resourceName]),
-          resource_amounts: operation.resources.map(r => r.amount * RESOURCE_PRECISION),
-        };
-      }).filter(Boolean);
 
-      if (callsForSystem.length === 0) {
-        log("No valid transfer operations to execute.", 'error', 'TransferResources');
-        setIsLoading(false);
-        return;
-      }
+        console.log(`TransferResourcesScript: Inputs for BigInt conversion (op ${opIndex}) - from: '${operation.fromRealmEntityId}', to: '${operation.toRealmEntityId}'`);
+        const fromRealmEntityIdBigInt = BigInt(operation.fromRealmEntityId);
+        const toRealmEntityIdBigInt = BigInt(operation.toRealmEntityId);
+
+        const resourcesFlatMapped = operation.resources.flatMap((r, rIndex) => {
+          const resourceId = RESOURCE_NAME_TO_ID[r.resourceName];
+          const amount = r.amount;
+          console.log(`TransferResourcesScript: Resource item (op ${opIndex}, res ${rIndex}) - ID_str: '${resourceId}', amount_str: '${amount}'`);
+          const resourceIdBigInt = BigInt(resourceId);
+          const amountBigIntWithPrecision = BigInt(amount) * BigInt(RESOURCE_PRECISION);
+          return [resourceIdBigInt, amountBigIntWithPrecision];
+        });
+
+        return {
+          sender_entity_id: fromRealmEntityIdBigInt,
+          recipient_entity_id: toRealmEntityIdBigInt,
+          resources: resourcesFlatMapped
+        };
+      });
+
+      console.log("TransferResourcesScript: Prepared callsForSystem for system call:", 
+        JSON.stringify(callsForSystem, (key, value) => 
+          typeof value === 'bigint' ? value.toString() + 'n' : value, 2)
+      );
 
       await systemCalls.send_resources_multiple({
         signer: account,
         calls: callsForSystem,
       });
-      log(`Successfully executed ${callsForSystem.length} transfer operation(s).`, 'success', 'TransferResources');
+      console.log("Batch transfer successful!");
+
     } catch (error) {
-      log(`Error during transfer: ${(error as Error).message}`, 'error', 'TransferResources');
+      console.error("Error during batch resource transfer:", error);
     } finally {
       setIsLoading(false);
     }
-  }, [account, systemCalls, jsonDataInput, log]);
+  }, [account, systemCalls, jsonDataInput, components]);
 
-  const buttonStyle: React.CSSProperties = {
-    padding: '6px 12px',
-    margin: '0 6px 6px 0',
-    backgroundColor: '#007bff',
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '0.95em',
-    opacity: isLoading ? 0.7 : 1,
+  const styles: {[key: string]: React.CSSProperties } = {
+    title: { margin: '0 0 10px 0' },
+    p: { fontSize: '0.85em', marginBottom: '10px' },
+    textArea: {
+      width: '100%',
+      minHeight: '5%',
+      margin: '6px 0',
+      padding: '6px',
+      border: '1px solid #777',
+      borderRadius: '4px',
+      backgroundColor: '#222',
+      color: 'white',
+      fontFamily: 'monospace',
+      fontSize: '0.85em',
+      boxSizing: 'border-box',
+    },
+    button: {
+      padding: '6px 12px',
+      margin: '0 6px 6px 0',
+      backgroundColor: '#007bff',
+      color: 'white',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontSize: '0.95em',
+      opacity: isLoading ? 0.7 : 1,
+    },
+    buttonContainer: { display: 'flex', gap: '10px', marginBottom: '10px' },
   };
-  const textAreaStyle: React.CSSProperties = {
-    width: '100%',
-    minHeight: '80px',
-    margin: '6px 0',
-    padding: '6px',
-    border: '1px solid #777',
-    borderRadius: '4px',
-    backgroundColor: '#222',
-    color: 'white',
-    fontFamily: 'monospace',
-    fontSize: '0.85em',
-    boxSizing: 'border-box',
-  };
+
 
   return (
-    <div style={{ padding: 0, border: 'none', margin: 0 }}>
-      <textarea
-        style={textAreaStyle}
-        value={jsonDataInput}
-        onChange={e => setJsonDataInput(e.target.value)}
-        placeholder={'Paste transfer JSON here...'}
-        disabled={isLoading}
-      />
-      <div style={{ display: 'flex', flexDirection: 'row', gap: 8 }}>
-        <button
-          style={buttonStyle}
-          onClick={handleTransfer}
-          disabled={isLoading || !account?.address || !systemCalls?.send_resources_multiple}
-        >
-          {isLoading ? 'Transferring...' : 'Transfer'}
-        </button>
-        <button
-          style={{ ...buttonStyle, backgroundColor: '#28a745' }}
-          onClick={executeDeposits}
-          disabled={isLoading || !account?.address}
-        >
-          {isLoading ? 'Depositing...' : 'Deposit All'}
-        </button>
-      </div>
-    </div>
+    React.createElement("div", { style: styles.container },
+      React.createElement("textarea", {
+        style: styles.textArea,
+        value: jsonDataInput,
+        onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => setJsonDataInput(e.target.value),
+        placeholder: 'Enter transfer details as JSON'
+      }),
+      React.createElement("div", { style: styles.buttonContainer },
+        React.createElement(Button, {
+          style:styles.button,
+          onClick: handleTransfer,
+          disabled: isLoading || !account?.address || !systemCalls?.send_resources_multiple,
+          children: isLoading ? 'Processing...' : 'Transfer resources'
+        }),
+        React.createElement(Button, {
+          style: {...styles.button, backgroundColor: '#28a745'},
+          onClick: executeDeposits,
+          disabled: isLoading || !account?.address || playerRealms.length === 0,
+          children: isLoading ? 'Processing...' : `Deposit all`
+        })
+      )
+    )
   );
 }; 
