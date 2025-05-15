@@ -535,6 +535,16 @@ export const AutoResourceProducerScript: React.FC = () => {
     return Array.from(resMap.entries()); // [resourceId, totalAmount]
   })();
 
+  // Add this effect after availableResources is defined
+  useEffect(() => {
+    if (!selectedRealmId || !availableResources.length) return;
+    // If current selectedResourceId is not in availableResources, set to first
+    const resourceIds = availableResources.map(([resId]) => resId);
+    if (selectedResourceId == null || !resourceIds.includes(selectedResourceId)) {
+      setSelectedResourceId(resourceIds[0]);
+    }
+  }, [selectedRealmId, availableResources]);
+
   const buttonStyle: React.CSSProperties = {
     padding: '10px 15px',
     margin: '5px',
