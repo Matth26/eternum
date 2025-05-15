@@ -5,16 +5,16 @@ import {
   getBalance
 } from '@bibliothecadao/eternum';
 import { useDojo } from '@bibliothecadao/react';
-import { ID, ResourcesIds, StructureType } from '@bibliothecadao/types'; // Corrected import path
+import { ID, ResourcesIds } from '@bibliothecadao/types'; // Corrected import path
 import { getComponentValue } from '@dojoengine/recs'; // Import getComponentValue
 import React, { useCallback, useEffect, useState } from 'react';
 
 const LABOR_RESOURCE_ID = ResourcesIds.Labor;
 
 // Default values for sliders
-const DEFAULT_PERCENTAGE_FOR_LABOR_INPUT = 0.01;
-const DEFAULT_PERCENTAGE_INPUT_FOR_RESOURCES = 0.01;
-const DEFAULT_PERCENTAGE_LABOR_FOR_RESOURCES = 0.01;
+const DEFAULT_PERCENTAGE_FOR_LABOR_INPUT = 0;
+const DEFAULT_PERCENTAGE_INPUT_FOR_RESOURCES = 0;
+const DEFAULT_PERCENTAGE_LABOR_FOR_RESOURCES = 0;
 
 // localStorage keys
 const STORAGE_KEY_PREFIX = 'autoResourceProducer_';
@@ -45,14 +45,17 @@ const sliderStyle: React.CSSProperties = { width: '100%', marginBottom: '5px' };
 const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '2px', fontSize: '0.9em' };
 const valueStyle: React.CSSProperties = { fontSize: '0.9em', color: '#aaa', marginLeft: '10px' };
 
-export const AutoResourceProducerScript: React.FC = () => {
+interface AutoResourceProducerScriptProps {
+  log: (message: string, type?: 'info' | 'error' | 'success', script?: string) => void;
+}
+
+export const AutoResourceProducerScript: React.FC<AutoResourceProducerScriptProps> = ({ log }) => {
   const {
     account: { account },
     setup: { components, systemCalls },
   } = useDojo();
 
   const [isLoading, setIsLoading] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [productionPlan, setProductionPlan] = useState<any[]>([]); // Holds the result of phase 1
   const [selectedRealmId, setSelectedRealmId] = useState<ID | null>(null);
   const [selectedResourceId, setSelectedResourceId] = useState<number | null>(null);
@@ -73,33 +76,30 @@ export const AutoResourceProducerScript: React.FC = () => {
     return saved ? parseFloat(saved) : DEFAULT_PERCENTAGE_LABOR_FOR_RESOURCES;
   });
 
-  const log = useCallback((message: string, type: LogEntry['type'] = 'info', realmId?: ID) => {
-    console.log(`[AutoProducer] ${realmId ? `(Realm ${realmId}) ` : ''}${message}`);
-    setLogs((prevLogs: LogEntry[]) => {
-      const newLogs = [{ timestamp: new Date(), message, realmId, type }, ...prevLogs].slice(0, 100);
-      // localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(newLogs)); // Logs will be saved in a separate useEffect
-      return newLogs;
-    });
-  }, []);
-  
-   const getMyOwnedRealms = useCallback(async () => {
+  const getMyOwnedRealms = useCallback(async () => {
     if (!account || !components?.Structure) return [];
     const ownedRealms: { name: string; entityId: ID; coord: { x: number; y: number } }[] = [];
-    const structureEntities = components.Structure.entities(); // This might need to be runQuery([Has(components.Structure)]) depending on Recs/Dojo version
+    const structureEntities = components.Structure.entities();
     for (const entityId of structureEntities) {
-        const structure = getComponentValue(components.Structure, entityId); // Corrected usage
-        if (structure && structure.owner && BigInt(structure.owner) === BigInt(account.address)) {
-            if (Number(structure.category) === StructureType.Realm) {
-                 ownedRealms.push({
-                    name: `Realm ${structure.entity_id}`, 
-                    entityId: structure.entity_id,
-                    coord: { x: structure.base?.coord_x || 0, y: structure.base?.coord_y || 0 }, 
-                });
-            }
+      const structure = getComponentValue(components.Structure, entityId);
+      if (structure) {
+        const ownerAddressHex = "0x" + structure.owner?.toString(16);
+        const numericCategory = Number(structure.category);
+        const entityIdString = structure.entity_id?.toString();
+        log(`[RealmDetect] structure: owner=${ownerAddressHex}, category=${numericCategory}, entityId=${entityIdString}`);
+        if (ownerAddressHex && ownerAddressHex.toLowerCase() === account.address.toLowerCase()) {
+          if (numericCategory === 1) { // Realm
+            ownedRealms.push({
+              name: `Realm ${entityIdString}`,
+              entityId: entityIdString,
+              coord: { x: structure.base?.coord_x || 0, y: structure.base?.coord_y || 0 },
+            });
+          }
         }
+      }
     }
     return ownedRealms;
-  }, [account, components?.Structure]);
+  }, [account, components?.Structure, log]);
 
   // --- PHASE 1: Data Collection & Preparation ---
   const fetchProductionPlan = useCallback(async () => {
@@ -252,6 +252,7 @@ export const AutoResourceProducerScript: React.FC = () => {
             }
         }
       }
+      log(`[Phase1] allRealmOperations to setProductionPlan: ${JSON.stringify(allRealmOperations)}`, 'info');
       setProductionPlan(allRealmOperations);
       log('Phase 1: Data collection complete. Ready for execution.', 'success');
     } catch (error) {
@@ -276,7 +277,7 @@ export const AutoResourceProducerScript: React.FC = () => {
       let realmExecuteCount = 0;
       for (const op of productionPlan) {
         realmExecuteCount++;
-        log(`Executing operations for Realm ID: ${op.realmId} (${op.realmName}) (Realm ${realmExecuteCount} of ${productionPlan.length})`, 'info', op.realmId);
+        log(`Executing operations for Realm ID: ${op.realmId} (${op.realmName}) (Realm ${realmExecuteCount} of ${productionPlan.length})`, 'info', op.realmId.toString());
         // --- Labor Production ---
         if (op.laborProdArgs) {
           // Filter by slider value
@@ -290,29 +291,29 @@ export const AutoResourceProducerScript: React.FC = () => {
             if (amt % precision !== 0) {
               const adjusted = Math.floor(amt / precision) * precision;
               if (adjusted > 0) {
-                log(`Adjusted resource amount for resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}) in realm ${op.realmId} from ${amt} to ${adjusted} to match precision (${precision}). Slider: ${percent}`, 'info', op.realmId);
+                log(`Adjusted resource amount for resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}) in realm ${op.realmId} from ${amt} to ${adjusted} to match precision (${precision}). Slider: ${percent}`, 'info', op.realmId.toString());
                 amt = adjusted;
               } else {
-                log(`[SKIP] Resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}) in realm ${op.realmId} skipped. Original amount: ${amt}, precision: ${precision}, slider: ${percent}`, 'info', op.realmId);
+                log(`[SKIP] Resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}) in realm ${op.realmId} skipped. Original amount: ${amt}, precision: ${precision}, slider: ${percent}`, 'info', op.realmId.toString());
                 return;
               }
             }
-            log(`[LABOR_PROD] Realm ${op.realmId}, Resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}): Amount to burn: ${amt}, Slider: ${percent}`, 'info', op.realmId);
+            log(`[LABOR_PROD] Realm ${op.realmId}, Resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}): Amount to burn: ${amt}, Slider: ${percent}`, 'info', op.realmId.toString());
             filteredTypes.push(resId);
             filteredAmounts.push(amt);
           });
           if (filteredTypes.length > 0) {
             try {
-              log(`Batch burning ${filteredTypes.length} resource types for Labor in realm ${op.realmId}.`, 'info', op.realmId);
+              log(`Batch burning ${filteredTypes.length} resource types for Labor in realm ${op.realmId}.`, 'info', op.realmId.toString());
                 await systemCalls.burn_resource_for_labor_production({
                     signer: account,
                 entity_id: op.realmId,
                 resource_types: filteredTypes,
                 resource_amounts: filteredAmounts,
               });
-              log(`SUCCESS: Batch burn for Labor in realm ${op.realmId}. Resources: ${filteredTypes.map((id: ResourcesIds) => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId);
+              log(`SUCCESS: Batch burn for Labor in realm ${op.realmId}. Resources: ${filteredTypes.map((id: ResourcesIds) => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId.toString());
             } catch (e) {
-                log(`ERROR: Batch burn for Labor in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId);
+                log(`ERROR: Batch burn for Labor in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId.toString());
             }
         }
         }
@@ -324,22 +325,22 @@ export const AutoResourceProducerScript: React.FC = () => {
             const slider = sliderSettings[op.realmId]?.[resId];
             const percent = slider ? slider.rawInput : 0.5;
             const cycles = op.rawReplenishArgs.cycles[idx];
-            log(`[RAW_REPLENISH] Realm ${op.realmId}, Resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}): Cycles: ${cycles}, Slider: ${percent}`, 'info', op.realmId);
+            log(`[RAW_REPLENISH] Realm ${op.realmId}, Resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}): Cycles: ${cycles}, Slider: ${percent}`, 'info', op.realmId.toString());
             filteredTypes.push(resId);
             filteredCycles.push(cycles);
           });
           if (filteredTypes.length > 0) {
             try {
-              log(`Batch replenishing ${filteredTypes.length} resource types with raw inputs in realm ${op.realmId}.`, 'info', op.realmId);
+              log(`Batch replenishing ${filteredTypes.length} resource types with raw inputs in realm ${op.realmId}.`, 'info', op.realmId.toString());
                 await systemCalls.burn_resource_for_resource_production({
                     signer: account,
                 from_entity_id: op.realmId,
                 produced_resource_types: filteredTypes,
                 production_cycles: filteredCycles,
               });
-              log(`SUCCESS: Batch replenish with raw inputs in realm ${op.realmId}. Resources: ${filteredTypes.map((id: ResourcesIds) => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId);
+              log(`SUCCESS: Batch replenish with raw inputs in realm ${op.realmId}. Resources: ${filteredTypes.map((id: ResourcesIds) => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId.toString());
             } catch (e) {
-                log(`ERROR: Batch replenish with raw inputs in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId);
+                log(`ERROR: Batch replenish with raw inputs in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId.toString());
             }
         }
         }
@@ -351,26 +352,26 @@ export const AutoResourceProducerScript: React.FC = () => {
             const slider = sliderSettings[op.realmId]?.[resId];
             const percent = slider ? slider.laborForResource : 0.25;
             const cycles = op.laborReplenishArgs.cycles[idx];
-            log(`[LABOR_REPLENISH] Realm ${op.realmId}, Resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}): Cycles: ${cycles}, Labor budget per type: ${op.laborReplenishArgs.laborBudgetPerType}, Slider: ${percent}`, 'info', op.realmId);
+            log(`[LABOR_REPLENISH] Realm ${op.realmId}, Resource ${resId} (${ResourcesIds[resId] ?? 'Unknown'}): Cycles: ${cycles}, Labor budget per type: ${op.laborReplenishArgs.laborBudgetPerType}, Slider: ${percent}`, 'info', op.realmId.toString());
             filteredTypes.push(resId);
             filteredCycles.push(cycles);
           });
           if (filteredTypes.length > 0) {
             try {
-              log(`Batch replenishing ${filteredTypes.length} resource types with Labor in realm ${op.realmId}.`, 'info', op.realmId);
+              log(`Batch replenishing ${filteredTypes.length} resource types with Labor in realm ${op.realmId}.`, 'info', op.realmId.toString());
                 await systemCalls.burn_labor_for_resource_production({
                     signer: account,
                 from_entity_id: op.realmId,
                 produced_resource_types: filteredTypes,
                 production_cycles: filteredCycles,
               });
-              log(`SUCCESS: Batch replenish with Labor in realm ${op.realmId}. Resources: ${filteredTypes.map((id: ResourcesIds) => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId);
+              log(`SUCCESS: Batch replenish with Labor in realm ${op.realmId}. Resources: ${filteredTypes.map((id: ResourcesIds) => ResourcesIds[id]).join(', ')}.`, 'success', op.realmId.toString());
             } catch (e) {
-                log(`ERROR: Batch replenish with Labor in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId);
+                log(`ERROR: Batch replenish with Labor in realm ${op.realmId}: ${(e as Error).message}`, 'error', op.realmId.toString());
             }
             }
         }
-        log(`All operations executed for Realm ID: ${op.realmId}`, 'info', op.realmId);
+        log(`All operations executed for Realm ID: ${op.realmId}`, 'info', op.realmId.toString());
       }
     } catch (error) {
       log(`Error in phase 2: ${(error as Error).message}`, 'error');
@@ -387,7 +388,11 @@ export const AutoResourceProducerScript: React.FC = () => {
           ...logEntry,
           timestamp: new Date(logEntry.timestamp), // Rehydrate Date objects
         }));
-        setLogs(parsedLogs);
+        // Replace all setLogs and local log state with the provided log function
+        // For example, replace:
+        //   setLogs((prevLogs: LogEntry[]) => { ... })
+        // with:
+        //   log(message, type, 'AutoResourceProducer')
       } catch (error) {
         console.error("Failed to parse logs from localStorage", error);
         localStorage.removeItem(STORAGE_KEY_LOGS); // Clear corrupted logs
@@ -399,17 +404,17 @@ export const AutoResourceProducerScript: React.FC = () => {
     if (savedIsRunning) {
       setIsLoading(savedIsRunning === 'true');
     }
-  }, []); // Empty dependency array ensures this runs only once on mount
+  }, [log]); // Empty dependency array ensures this runs only once on mount
 
   // Effect to save logs to localStorage whenever they change
   useEffect(() => {
-    if (logs.length > 0 || localStorage.getItem(STORAGE_KEY_LOGS)) { // Save if logs exist or if there were previous logs to clear
-        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(logs.map((logEntry: LogEntry) => ({
-            ...logEntry,
-            timestamp: logEntry.timestamp.toISOString(), // Store dates as ISO strings
+    if (productionPlan.length > 0 || localStorage.getItem(STORAGE_KEY_LOGS)) { // Save if logs exist or if there were previous logs to clear
+        localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(productionPlan.map((op: any) => ({
+            ...op,
+            timestamp: op.timestamp.toISOString(), // Store dates as ISO strings
         }))));
     }
-  }, [logs]);
+  }, [productionPlan]);
   
   // Effects to save settings to localStorage whenever they change
   useEffect(() => {
@@ -502,6 +507,136 @@ export const AutoResourceProducerScript: React.FC = () => {
     }));
   };
 
+  // --- EXPORT/IMPORT SETTINGS ---
+  const buttonStyle: React.CSSProperties = {
+    padding: '6px 12px',
+    margin: '0 6px 6px 0',
+    backgroundColor: '#007bff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '0.95em',
+    opacity: isLoading ? 0.7 : 1,
+  };
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const exportSettings = () => {
+    const data = {
+      sliderSettings,
+      selectedRealmId,
+      selectedResourceId,
+      percentageForLaborInput,
+      percentageInputForResources,
+      percentageLaborForResources,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'resourceProducerSettings.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importSettings = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (data.sliderSettings) setSliderSettings(data.sliderSettings);
+        if (typeof data.selectedRealmId !== 'undefined') setSelectedRealmId(data.selectedRealmId);
+        if (typeof data.selectedResourceId !== 'undefined') setSelectedResourceId(data.selectedResourceId);
+        if (typeof data.percentageForLaborInput === 'number') setPercentageForLaborInput(data.percentageForLaborInput);
+        if (typeof data.percentageInputForResources === 'number') setPercentageInputForResources(data.percentageInputForResources);
+        if (typeof data.percentageLaborForResources === 'number') setPercentageLaborForResources(data.percentageLaborForResources);
+        log('Settings imported successfully.', 'success');
+      } catch (err) {
+        log('Failed to import settings: ' + (err as Error).message, 'error');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImportClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  // --- Ensure dropdowns always show after fetching production plan or importing settings ---
+  useEffect(() => {
+    log('[DropdownInit] Running dropdown initialization effect', 'info');
+    log(`[DropdownInit] productionPlan: ${JSON.stringify(productionPlan)}`, 'info');
+    log(`[DropdownInit] sliderSettings: ${JSON.stringify(sliderSettings)}`, 'info');
+    log(`[DropdownInit] selectedRealmId: ${selectedRealmId}`, 'info');
+    log(`[DropdownInit] selectedResourceId: ${selectedResourceId}`, 'info');
+    if (productionPlan.length > 0) {
+      // If sliderSettings is empty or missing realms/resources, initialize
+      let changed = false;
+      const newSettings: Record<string, Record<string, { laborInput: number; rawInput: number; laborForResource: number }>> = { ...sliderSettings };
+      for (const op of productionPlan) {
+        const realmId = op.realmId.toString();
+        if (!newSettings[realmId]) { newSettings[realmId] = {}; changed = true; log(`Initializing sliderSettings for realm ${realmId}`); }
+        if (op.laborProdArgs) {
+          op.laborProdArgs.types.forEach((resId: number) => {
+            if (!newSettings[realmId][resId]) { newSettings[realmId][resId] = {
+              laborInput: typeof percentageForLaborInput === 'number' ? percentageForLaborInput : 0.01,
+              rawInput: typeof percentageInputForResources === 'number' ? percentageInputForResources : 0.01,
+              laborForResource: typeof percentageLaborForResources === 'number' ? percentageLaborForResources : 0.01
+            }; changed = true; log(`Initializing slider for realm ${realmId} resource ${resId}`); }
+          });
+        }
+        if (op.rawReplenishArgs) {
+          op.rawReplenishArgs.types.forEach((resId: number) => {
+            if (!newSettings[realmId][resId]) { newSettings[realmId][resId] = {
+              laborInput: typeof percentageForLaborInput === 'number' ? percentageForLaborInput : 0.01,
+              rawInput: typeof percentageInputForResources === 'number' ? percentageInputForResources : 0.01,
+              laborForResource: typeof percentageLaborForResources === 'number' ? percentageLaborForResources : 0.01
+            }; changed = true; log(`Initializing slider for realm ${realmId} resource ${resId}`); }
+          });
+        }
+        if (op.laborReplenishArgs) {
+          op.laborReplenishArgs.types.forEach((resId: number) => {
+            if (!newSettings[realmId][resId]) { newSettings[realmId][resId] = {
+              laborInput: typeof percentageForLaborInput === 'number' ? percentageForLaborInput : 0.01,
+              rawInput: typeof percentageInputForResources === 'number' ? percentageInputForResources : 0.01,
+              laborForResource: typeof percentageLaborForResources === 'number' ? percentageLaborForResources : 0.01
+            }; changed = true; log(`Initializing slider for realm ${realmId} resource ${resId}`); }
+          });
+        }
+      }
+      if (changed) setSliderSettings(newSettings);
+      // Set default selected realm/resource if not valid
+      const availableRealmIds = productionPlan.map((op: any) => op.realmId);
+      let realmToSet = selectedRealmId;
+      if (!selectedRealmId || !availableRealmIds.includes(selectedRealmId)) {
+        realmToSet = availableRealmIds[0];
+        setSelectedRealmId(realmToSet);
+        log(`Set selectedRealmId to ${realmToSet} (default)`);
+      }
+      // Find available resources for selected realm
+      const op = productionPlan.find((op: any) => op.realmId === (realmToSet || availableRealmIds[0]));
+      let firstRes = null;
+      if (op) {
+        if (op.laborProdArgs && op.laborProdArgs.types.length > 0) firstRes = op.laborProdArgs.types[0];
+        else if (op.rawReplenishArgs && op.rawReplenishArgs.types.length > 0) firstRes = op.rawReplenishArgs.types[0];
+        else if (op.laborReplenishArgs && op.laborReplenishArgs.types.length > 0) firstRes = op.laborReplenishArgs.types[0];
+      }
+      if (!selectedResourceId || (op && !Object.keys(newSettings[op.realmId.toString()] || {}).includes(selectedResourceId.toString()))) {
+        setSelectedResourceId(firstRes);
+        log(`Set selectedResourceId to ${firstRes} (default)`);
+      }
+      // Logging for dropdown visibility issues
+      if (Object.keys(newSettings).length === 0) log('Dropdowns not shown: sliderSettings is empty', 'error');
+      if (!realmToSet) log('Dropdowns not shown: selectedRealmId is missing', 'error');
+      if (!firstRes) log('Dropdowns not shown: no available resources for selected realm', 'error');
+    }
+  }, [productionPlan, sliderSettings, selectedRealmId, selectedResourceId, percentageForLaborInput, percentageInputForResources, percentageLaborForResources]);
+
   // Get available realms and resources for dropdowns
   // Deduplicate realms by realmId
   const availableRealmsMap = new Map<string, { realmId: string, realmName: string }>();
@@ -545,37 +680,31 @@ export const AutoResourceProducerScript: React.FC = () => {
     }
   }, [selectedRealmId, availableResources]);
 
-  const buttonStyle: React.CSSProperties = {
-    padding: '10px 15px',
-    margin: '5px',
-    // Base color will be overridden by isLoading or depend on isRunning
-    color: 'white',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '1em',
-  };
-
   return (
-    <div style={{ fontFamily: 'monospace', padding: '10px', border: '1px solid #ccc', margin: '10px 0' }}>
-      <h4>Automatic Resource Producer</h4>
-      <p style={{ fontSize: '0.85em', marginBottom: '10px' }}>
-        This script allows you to manually fetch and execute resource production plans in two steps.
-      </p>
-      <button
-        style={{ ...buttonStyle, backgroundColor: '#007bff', opacity: isLoading ? 0.7 : 1 }}
-        onClick={fetchProductionPlan}
-        disabled={isLoading || !account?.address}
-      >
-        {isLoading ? 'Processing...' : '1. Fetch Production Plan'}
-      </button>
+    <div style={{ fontFamily: 'monospace', padding: 0, border: 'none', margin: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'row', gap: 8, marginBottom: 6 }}>
+        <button
+          style={buttonStyle}
+          onClick={fetchProductionPlan}
+          disabled={isLoading || !account?.address}
+        >
+          {isLoading ? 'Processing...' : 'Fetch Plan'}
+        </button>
+        <button
+          style={{ ...buttonStyle, backgroundColor: '#28a745' }}
+          onClick={executeProductionPlan}
+          disabled={isLoading || !account?.address || !productionPlan.length}
+        >
+          {isLoading ? 'Processing...' : 'Execute Plan'}
+        </button>
+      </div>
       {productionPlan.length > 0 && (
-        <div style={{ margin: '15px 0', padding: '10px', border: '1px solid #ddd', borderRadius: '4px' }}>
-          <label style={labelStyle}>Select Realm:
+        <div style={{ margin: '0 0 6px 0', padding: '6px', border: '1px solid #333', borderRadius: '4px' }}>
+          <label style={labelStyle}>Realm:
             <select
               value={selectedRealmId ?? ''}
               onChange={e => setSelectedRealmId(e.target.value as any)}
-              style={{ marginLeft: 8, background: '#222', color: '#fff', border: '1px solid #444', borderRadius: 4, padding: '4px 8px' }}
+              style={selectStyle}
             >
               {availableRealms.map(r => (
                 <option key={r.realmId} value={r.realmId} style={{ background: '#222', color: '#fff' }}>{r.realmName} ({r.realmId})</option>
@@ -583,88 +712,68 @@ export const AutoResourceProducerScript: React.FC = () => {
             </select>
           </label>
           {selectedRealmId && (
-            <label style={labelStyle}>Select Resource:
+            <label style={labelStyle}>Resource:
               <select
                 value={selectedResourceId ?? ''}
                 onChange={e => setSelectedResourceId(Number(e.target.value))}
-                style={{ marginLeft: 8, background: '#222', color: '#fff', border: '1px solid #444', borderRadius: 4, padding: '4px 8px' }}
+                style={selectStyle}
               >
                 {availableResources.map(([resId, amount]) => (
                   <option key={`${selectedRealmId}-${resId}`} value={resId} style={{ background: '#222', color: '#fff' }}>
-                    {ResourcesIds[resId] ?? resId} (amount: {divideByPrecision(amount).toLocaleString()})
+                    {ResourcesIds[resId] ?? resId} (amt: {divideByPrecision(amount).toLocaleString()})
                   </option>
                 ))}
               </select>
-        </label>
+            </label>
           )}
           {selectedRealmId && selectedResourceId && sliderSettings[selectedRealmId]?.[selectedResourceId] && (
-            <div style={{ marginTop: 10 }}>
-        <label style={labelStyle}>
-          % of Input Resources for Labor Prod:
+            <div style={{ marginTop: 6 }}>
+              <label style={labelStyle}>
+                % Labor Input:
                 <span style={valueStyle}>{(sliderSettings[selectedRealmId][selectedResourceId].laborInput * 100).toFixed(0)}%</span>
-        </label>
-        <input 
-          type="range" 
-          min="0" 
-          max="100" 
-          step="1"
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
                 value={sliderSettings[selectedRealmId][selectedResourceId].laborInput * 100}
                 onChange={e => handleSliderChange('laborInput', parseFloat(e.target.value) / 100)}
-          style={sliderStyle}
+                style={sliderStyle}
                 disabled={isLoading}
-        />
-        <label style={labelStyle}>
-          % of Raw Inputs for Resource Prod:
+              />
+              <label style={labelStyle}>
+                % Raw Input:
                 <span style={valueStyle}>{(sliderSettings[selectedRealmId][selectedResourceId].rawInput * 100).toFixed(0)}%</span>
-        </label>
-        <input 
-          type="range" 
-          min="0" 
-          max="100" 
-          step="1"
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
                 value={sliderSettings[selectedRealmId][selectedResourceId].rawInput * 100}
                 onChange={e => handleSliderChange('rawInput', parseFloat(e.target.value) / 100)}
-          style={sliderStyle}
+                style={sliderStyle}
                 disabled={isLoading}
-        />
-        <label style={labelStyle}>
-          % of Labor for Resource Prod:
+              />
+              <label style={labelStyle}>
+                % Labor for Resource:
                 <span style={valueStyle}>{(sliderSettings[selectedRealmId][selectedResourceId].laborForResource * 100).toFixed(0)}%</span>
-        </label>
-        <input 
-          type="range" 
-          min="0" 
-          max="100" 
-          step="1"
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
                 value={sliderSettings[selectedRealmId][selectedResourceId].laborForResource * 100}
                 onChange={e => handleSliderChange('laborForResource', parseFloat(e.target.value) / 100)}
-          style={sliderStyle}
+                style={sliderStyle}
                 disabled={isLoading}
-        />
-      </div>
+              />
+            </div>
           )}
         </div>
       )}
-      <button
-        style={{ ...buttonStyle, backgroundColor: '#28a745', opacity: isLoading || !productionPlan.length ? 0.7 : 1 }}
-        onClick={executeProductionPlan}
-        disabled={isLoading || !account?.address || !productionPlan.length}
-      >
-        {isLoading ? 'Processing...' : '2. Execute Production Plan'}
-      </button>
-      <h5>Logs:</h5>
-      <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #eee', padding: '5px', background: '#f9f9f9' }}>
-        {logs.length === 0 && <p>No logs yet.</p>}
-        {logs.map((entry: LogEntry, index: number) => (
-          <div key={index} style={{ marginBottom: '5px', paddingBottom: '5px', borderBottom: '1px dashed #ddd' }}>
-            <span style={{ color: '#888', fontSize: '0.8em' }}>{entry.timestamp.toLocaleTimeString()} </span>
-            {entry.realmId && <span style={{ color: 'blue', fontSize: '0.8em' }}>(Realm {entry.realmId.toString()}) </span>}
-            <span style={{ color: entry.type === 'error' ? 'red' : entry.type === 'success' ? 'green' : 'black' }}>
-              {entry.message}
-            </span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }; 

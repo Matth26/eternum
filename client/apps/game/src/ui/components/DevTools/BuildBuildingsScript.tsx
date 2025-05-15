@@ -363,66 +363,46 @@ export const BuildBuildingsScript: React.FC = () => {
 
   }, [jsonDataInput, account, systemCalls, components, findAvailableSlot]);
 
-  const styles = {
-    container: { padding: '10px' },
-    title: { margin: '0 0 10px 0' },
-    p: { fontSize: '0.85em', marginBottom: '10px' },
-    textArea: {
-      width: '100%',
-      minHeight: '200px',
-      padding: '8px',
-      border: '1px solid #777',
-      borderRadius: '4px',
-      backgroundColor: '#222',
-      color: 'white',
-      fontFamily: 'monospace',
-      fontSize: '0.9em',
-      boxSizing: 'border-box' as const,
-      marginBottom: '10px',
-    },
-    button: {
-      padding: '10px 15px',
-      backgroundColor: '#007bff',
-      color: 'white',
-      border: 'none',
-      borderRadius: '4px',
-      cursor: 'pointer',
-      fontSize: '1em',
-      opacity: isLoading ? 0.7 : 1,
-    },
+  const buttonStyle: React.CSSProperties = {
+    padding: '6px 12px',
+    margin: '0 6px 6px 0',
+    backgroundColor: '#007bff',
+    color: 'white',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '0.95em',
+    opacity: isLoading ? 0.7 : 1,
   };
-  
-  // Prepare the display string for building types
-  const buildingTypesDisplayString = `// --- Building Types ---\n${Object.entries(BUILDING_NAME_TO_TYPE_ID)
-  .filter(([name, _]) => name !== "None") // Filter out "None"
-  .map(([name, _]) => `  ${name}`)
-  .join('\n')}`;
-
+  const textAreaStyle: React.CSSProperties = {
+    width: '100%',
+    minHeight: '80px',
+    margin: '6px 0',
+    padding: '6px',
+    border: '1px solid #777',
+    borderRadius: '4px',
+    backgroundColor: '#222',
+    color: 'white',
+    fontFamily: 'monospace',
+    fontSize: '0.85em',
+    boxSizing: 'border-box',
+  };
   return (
-    <div style={styles.container}>
-      <h4>Create buildings script</h4>
-      <p style={styles.p}>
-        Input a JSON array of building actions.
-      </p>
+    <div style={{ padding: 0, border: 'none', margin: 0 }}>
       <textarea
-        style={styles.textArea}
+        style={textAreaStyle}
         value={jsonDataInput}
-        onChange={(e) => setJsonDataInput(e.target.value)}
+        onChange={e => setJsonDataInput(e.target.value)}
         placeholder="Enter JSON array of build actions here..."
+        disabled={isLoading}
       />
       <button
-        style={styles.button}
+        style={buttonStyle}
         onClick={handleBuild}
         disabled={isLoading || !account?.address || !systemCalls?.create_building || !components?.Building}
       >
         {isLoading ? 'Building...' : 'Execute Build Actions'}
-      </button>      
-      <p style={{ fontSize: '0.75em', marginTop: '5px', color: '#aaa' }}>
-        <code>useSimpleCost</code> set to true will use labor as the single resource to create the building.
-      </p>
-       <pre style={{ fontSize: '0.7em', color: '#ccc', maxHeight: '100px', overflowY: 'auto', background: '#222', padding: '5px', whiteSpace: 'pre-wrap', userSelect: 'text' , marginTop: '5px'}}> 
-         {buildingTypesDisplayString}
-      </pre>
+      </button>
     </div>
   );
 }; 
