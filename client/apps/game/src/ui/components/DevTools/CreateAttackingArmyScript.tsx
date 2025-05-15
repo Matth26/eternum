@@ -1,21 +1,21 @@
 import { getBlockTimestamp } from "@/utils/timestamp";
 import {
-  ArmyManager,
-  divideByPrecision,
-  getBalance,
-  getOffchainRealm,
-  getTroopResourceId
+    ArmyManager,
+    divideByPrecision,
+    getBalance,
+    getOffchainRealm,
+    getTroopResourceId
 } from "@bibliothecadao/eternum";
 import { useDojo } from "@bibliothecadao/react";
 import { getTilesFromToriiClient } from "@bibliothecadao/torii-client";
 import {
-  Direction,
-  getDirectionBetweenAdjacentHexes,
-  getNeighborHexes,
-  ID,
-  StructureType,
-  TroopTier,
-  TroopType,
+    Direction,
+    getDirectionBetweenAdjacentHexes,
+    getNeighborHexes,
+    ID,
+    StructureType,
+    TroopTier,
+    TroopType,
 } from "@bibliothecadao/types";
 import { getComponentValue, Has, runQuery } from "@dojoengine/recs";
 import React, { useCallback, useState } from 'react';
@@ -26,10 +26,14 @@ interface OwnedRealmInfo {
   coord: { x: number; y: number };
 }
 
+interface CreateAttackingArmyScriptProps {
+  log: (message: string, type?: 'info' | 'error' | 'success', script?: string) => void;
+}
+
 const TROOP_TYPES_TO_CHECK = [TroopType.Crossbowman, TroopType.Knight, TroopType.Paladin];
 const TROOP_TIERS_TO_CHECK = [TroopTier.T3, TroopTier.T2, TroopTier.T1]; // Prioritize higher tiers
 
-export const CreateAttackingArmyScript: React.FC = () => {
+export const CreateAttackingArmyScript: React.FC<CreateAttackingArmyScriptProps> = ({ log }) => {
   const {
     account: { account },
     setup: { components, systemCalls, network: { toriiClient } },
@@ -37,22 +41,18 @@ export const CreateAttackingArmyScript: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState(false);
 
-  const log = (message: string) => {
-    console.log(message);
-  };
-
   const handleCreateArmies = useCallback(async () => {
     if (!account || !account.address) {
-      log("Error: Account address not available. Please connect wallet.");
+      log("Error: Account address not available. Please connect wallet.", 'error', 'CreateAttackingArmy');
       return;
     }
     if (!components?.Structure || !components?.ExplorerTroops || !components?.Resource) {
-      log("Error: Required components not available in Dojo setup.");
+      log("Error: Required components not available in Dojo setup.", 'error', 'CreateAttackingArmy');
       return;
     }
 
     setIsLoading(true);
-    log('Starting to create attacking armies for your realms...');
+    log('Starting to create attacking armies for your realms...', 'info', 'CreateAttackingArmy');
 
     try {
       // 1. Fetch Owned Realms
@@ -84,15 +84,15 @@ export const CreateAttackingArmyScript: React.FC = () => {
       }
 
       if (ownedRealms.length === 0) {
-        log('No owned Realms found.');
+        log('No owned Realms found.', 'info', 'CreateAttackingArmy');
         setIsLoading(false);
         return;
       }
 
-      log(`Found ${ownedRealms.length} owned realm(s). Processing each...`);
+      log(`Found ${ownedRealms.length} owned realm(s). Processing each...`, 'info', 'CreateAttackingArmy');
 
       for (const realm of ownedRealms) {
-        log(`Processing Realm: ${realm.name} (ID: ${realm.entityId}) at [${realm.coord.x}, ${realm.coord.y}]`);
+        log(`Processing Realm: ${realm.name} (ID: ${realm.entityId}) at [${realm.coord.x}, ${realm.coord.y}]`, 'info', 'CreateAttackingArmy');
         let armyCreatedForThisRealm = false;
 
         // 2. Find a Free Spawn Direction
@@ -111,14 +111,14 @@ export const CreateAttackingArmyScript: React.FC = () => {
             );
             if (direction !== null) {
               spawnDirection = direction;
-              log(`Found free spawn hex at [${tile.col}, ${tile.row}], direction: ${Direction[spawnDirection]}`);
+              log(`Found free spawn hex at [${tile.col}, ${tile.row}], direction: ${Direction[spawnDirection]}`, 'info', 'CreateAttackingArmy');
               break;
             }
           }
         }
 
         if (spawnDirection === null) {
-          log(`No free adjacent hex found to spawn army for Realm ${realm.name}. Skipping.`);
+          log(`No free adjacent hex found to spawn army for Realm ${realm.name}. Skipping.`, 'info', 'CreateAttackingArmy');
           continue;
         }
 
@@ -128,7 +128,7 @@ export const CreateAttackingArmyScript: React.FC = () => {
           for (const troopTier of TROOP_TIERS_TO_CHECK) {
             if (armyCreatedForThisRealm) break;
 
-            log(`Checking ${TroopType[troopType]} T${troopTier + 1} for Realm ${realm.name}...`);
+            log(`Checking ${TroopType[troopType]} T${troopTier + 1} for Realm ${realm.name}...`, 'info', 'CreateAttackingArmy');
             const resourceId = getTroopResourceId(troopType, troopTier);
             const { currentDefaultTick } = getBlockTimestamp();
             
@@ -139,11 +139,11 @@ export const CreateAttackingArmyScript: React.FC = () => {
             const affordableTroopCount = divideByPrecision(Number(troopResourceBalance));
 
             if (affordableTroopCount > 0) {
-              log(`Found resources for ${affordableTroopCount} ${TroopType[troopType]} T${troopTier + 1} in Realm ${realm.name}.`);
+              log(`Found resources for ${affordableTroopCount} ${TroopType[troopType]} T${troopTier + 1} in Realm ${realm.name}.`, 'info', 'CreateAttackingArmy');
               
               try {
                 const armyManager = new ArmyManager(systemCalls, components, realm.entityId);
-                log(`Attempting to create army with ${affordableTroopCount} ${TroopType[troopType]} T${troopTier + 1}...`);
+                log(`Attempting to create army with ${affordableTroopCount} ${TroopType[troopType]} T${troopTier + 1}...`, 'info', 'CreateAttackingArmy');
 
                 // createExplorerArmy expects a non-precision-multiplied count.
                 // It handles multiplyByPrecision internally.
@@ -154,10 +154,10 @@ export const CreateAttackingArmyScript: React.FC = () => {
                   affordableTroopCount, 
                   spawnDirection
                 );
-                log(`Successfully initiated transaction to create ${TroopType[troopType]} T${troopTier + 1} army for Realm ${realm.name}.`);
+                log(`Successfully initiated transaction to create ${TroopType[troopType]} T${troopTier + 1} army for Realm ${realm.name}.`, 'success', 'CreateAttackingArmy');
                 armyCreatedForThisRealm = true; 
               } catch (e) {
-                log(`Error creating army for Realm ${realm.name}: ${(e as Error).message}`);
+                log(`Error creating army for Realm ${realm.name}: ${(e as Error).message}`, 'error', 'CreateAttackingArmy');
               }
               break; // Break from tier loop once an army is created or an attempt is made
             } else {
@@ -166,21 +166,20 @@ export const CreateAttackingArmyScript: React.FC = () => {
           }
         }
         if (!armyCreatedForThisRealm) {
-          log(`No troop resources found or army creation failed for Realm ${realm.name}.`);
+          log(`No troop resources found or army creation failed for Realm ${realm.name}.`, 'info', 'CreateAttackingArmy');
         }
       }
-      log('Finished processing all realms.');
+      log('Finished processing all realms.', 'success', 'CreateAttackingArmy');
     } catch (error) {
-      log(`An unexpected error occurred: ${(error as Error).message}`);
-      console.error("Error creating armies:", error);
+      log(`An unexpected error occurred: ${(error as Error).message}`, 'error', 'CreateAttackingArmy');
     } finally {
       setIsLoading(false);
     }
-  }, [account, components, systemCalls, toriiClient]);
+  }, [account, components, systemCalls, toriiClient, log]);
 
   const buttonStyle: React.CSSProperties = {
     padding: '10px 15px',
-    margin: '10px 0',
+    margin: '0 0 10px 0',
     backgroundColor: '#007bff',
     color: 'white',
     border: 'none',
@@ -191,12 +190,7 @@ export const CreateAttackingArmyScript: React.FC = () => {
   };
 
   return (
-    <div>
-      <h4>Create attacking Army in all realms</h4>
-      <p style={{ fontSize: '0.85em', marginBottom: '10px' }}>
-        This script will attempt to create one attacking army in each of your realms.
-        It will spawn in the first available adjacent hex.
-      </p>
+    <div style={{ fontFamily: 'monospace', padding: 0, border: 'none', margin: 0 }}>
       <button
         style={buttonStyle}
         onClick={handleCreateArmies}

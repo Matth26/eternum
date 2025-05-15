@@ -1,119 +1,217 @@
-import React, { useState } from 'react';
-//import { BatchRealmsPerZoneScript } from './BatchRealmsPerZoneScript'; // Import the new script
-import { AutoResourceProducerScript } from './AutoResourceProducerScript'; // Import the new auto resource producer script
-import { BuildBuildingsScript } from './BuildBuildingsScript'; // Import the new script
-import { CreateAttackingArmyScript } from './CreateAttackingArmyScript'; // Import the new army script
-import { GetMyRealmsScript } from './GetMyRealmsScript'; // Import the new script
-import { TransferResourcesScript } from './TransferResourcesScript'; // Import the new script
+import { TabPanel } from '@/ui/elements/tab/tab-panel';
+import { TabPanels } from '@/ui/elements/tab/tab-panels';
+import { Tab } from '@headlessui/react';
+import React, { useCallback, useState } from 'react';
+import { AutoExploreArmiesScript } from './AutoExploreArmiesScript';
+import { AutoResourceProducerScript } from './AutoResourceProducerScript';
+import { BuildBuildingsScript } from './BuildBuildingsScript';
+import { CreateAttackingArmyScript } from './CreateAttackingArmyScript';
+import { GetMyRealmsScript } from './GetMyRealmsScript';
+import { TransferResourcesScript } from './TransferResourcesScript';
+// import { BatchRealmsPerZoneScript } from './BatchRealmsPerZoneScript';
+// import { GetBaseMapTilesScript } from './GetBaseMapTilesScript';
 
-// Placeholder for where your script components will be imported
-// import { BatchRealmSettleScript } from './BatchRealmSettleScript';
-
-type ScriptId = 'getAllLocations' | 'batchRealmsPerZone' | 'getMyRealms' | 'transferResources' | 'getBaseMapTiles' | 'buildBuildings' | 'depositAllTransfers' | 'createAttackingArmies' | 'autoResourceProducer' | null; // Added 'autoResourceProducer'
-
-interface Script {
-  id: ScriptId;
-  name: string;
-  description: string;
-  component: React.FC;
+export interface CompanionLogEntry {
+  timestamp: Date;
+  message: string;
+  type?: 'info' | 'error' | 'success';
+  script?: string;
 }
 
-// Placeholder for when no script is selected or if a script is missing
-const PlaceholderScriptComponent = () => <div>Select a script or implement the selected script's UI.</div>;
+export const CompanionUI: React.FC = () => {
+  const [isOpen, setIsOpen] = useState(true);
+  const [logs, setLogs] = useState<CompanionLogEntry[]>([]);
+  const [showLogs, setShowLogs] = useState(true);
 
-export const DevToolsPanel: React.FC = () => {
-  const [isOpen, setIsOpen] = useState(true); // Panel is open by default
-  const [selectedScript, setSelectedScript] = useState<ScriptId>(null);
+  // Shared log function to be passed to scripts
+  const log = useCallback((message: string, type: CompanionLogEntry['type'] = 'info', script?: string) => {
+    setLogs(prev => [{ timestamp: new Date(), message, type, script }, ...prev].slice(0, 200));
+  }, []);
 
-  const availableScripts: Script[] = [
-    //{ id: 'getAllLocations', name: 'Get base map tiles', component: GetBaseMapTilesScript },
-    //{ id: 'batchRealmsPerZone', name: 'Settle realms per zone', description: 'Batch settle realms based on zone and bank availability.', component: BatchRealmsPerZoneScript },
-    { id: 'getMyRealms', name: 'Get owned structures id', description: 'Fetches and displays all structures (realms, banks, villages) owned by the player.', component: GetMyRealmsScript }, // Add the new script here
-    { id: 'buildBuildings', name: 'Create buildings', description: 'Build multiple buildings on specified realms using a JSON input.', component: BuildBuildingsScript },
-    { id: 'transferResources', name: 'Transfer and deposit', description: 'Transfer resources between two realms using a JSON input.', component: TransferResourcesScript }, // Add the new script here
-    { id: 'createAttackingArmies', name: 'Create All Realm Armies', description: 'Creates an attacking army in each realm with available troops.', component: CreateAttackingArmyScript },
-    { id: 'autoResourceProducer', name: 'Auto Resource Producer', description: 'Automatically produces Labor and other resources in all realms.', component: AutoResourceProducerScript },
-    //{ id: 'getBaseMapTiles', name: 'Get Base Map Tiles', description: 'Fetches and displays base map tiles from the backend.', component: GetBaseMapTilesScript },
-    //{ id: 'depositAllTransfers', name: 'Deposit All Transfers', description: 'Finds and deposits all resource transfers ready to be offloaded at player structures.', component: DepositAllTransfersScript },
-    // Add other scripts here
-    // e.g. { id: 'anotherScript', name: 'Another Dev Script', component: AnotherScriptComponent },
+  // Global import/export settings handlers
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const exportSettings = () => {
+    // Placeholder: export empty object or future settings
+    const data = {};
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'companionSettings.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const importSettings = (event: React.ChangeEvent<HTMLInputElement>) => {
+    // Placeholder: handle imported settings in the future
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        // const data = JSON.parse(e.target?.result as string);
+        // TODO: apply settings globally if needed
+      } catch (err) {
+        // TODO: handle error
+      }
+    };
+    reader.readAsText(file);
+  };
+  const handleImportClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  // Tab and script order
+  const tabCategories = [
+    {
+      name: 'Production',
+      scripts: [
+        { name: 'Get owned structures id', component: GetMyRealmsScript },
+        { name: 'Create buildings', component: BuildBuildingsScript },
+        { name: 'Transfer and deposit', component: TransferResourcesScript },
+        { name: 'Auto Resource Producer', component: AutoResourceProducerScript },
+      ],
+    },
+    {
+      name: 'Army Movements',
+      scripts: [
+        { name: 'Create All Realm Armies', component: CreateAttackingArmyScript },
+        { name: 'Auto Explore Armies', component: AutoExploreArmiesScript },
+      ],
+    },
+    {
+      name: 'Settings',
+      scripts: [
+        { name: 'Export and import settings', component: () => (
+          <div style={{ fontSize: '0.9em', color: '#ccc', fontFamily: 'monospace' }}>
+            <div style={{ marginBottom: 8 }}>Export and import your settings to a JSON file.</div>
+            <div style={{ display: 'flex', flexDirection: 'row', gap: 8, marginBottom: 8 }}>
+              <button
+                style={{ padding: '6px 12px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.95em' }}
+                onClick={exportSettings}
+              >
+                Export Settings
+              </button>
+              <button
+                style={{ padding: '6px 12px', backgroundColor: '#6c757d', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.95em' }}
+                onClick={handleImportClick}
+              >
+                Import Settings
+              </button>
+              <input ref={fileInputRef} type="file" accept="application/json" style={{ display: 'none' }} onChange={importSettings} />
+            </div>
+          </div>
+        ) },
+        { name: 'Resource Types', component: () => (
+          <div style={{ fontSize: '0.9em', color: '#ccc', fontFamily: 'monospace' }}>
+            <div style={{ marginBottom: 8 }}><b>Resource Types</b>: Use these names in transfer/build scripts.</div>
+            <pre style={{ maxHeight: 120, overflowY: 'auto', background: '#222', padding: 8, borderRadius: 4 }}>
+              {`Stone, Coal, Wood, Copper, Ironwood, Obsidian, Gold, Silver, Mithral, AlchemicalSilver, ColdIron, DeepCrystal, Ruby, Diamonds, Hartwood, Ignium, TwilightQuartz, TrueIce, Adamantine, Sapphire, EtherealSilica, Dragonhide, Labor, AncientFragment, Donkey, Knight, KnightT2, KnightT3, Crossbowman, CrossbowmanT2, CrossbowmanT3, Paladin, PaladinT2, PaladinT3, Wheat, Fish, Lords`}
+            </pre>
+            <div style={{ marginTop: 8, color: '#aaa', fontSize: '0.85em' }}>Use these resource names in the JSON for transfer/build scripts.</div>
+          </div>
+        ) },
+        { name: 'Building Types', component: () => (
+          <div style={{ fontSize: '0.9em', color: '#ccc', fontFamily: 'monospace' }}>
+            <div style={{ marginBottom: 8 }}><b>Building Types</b>: Use these names in build scripts.</div>
+            <pre style={{ maxHeight: 120, overflowY: 'auto', background: '#222', padding: 8, borderRadius: 4 }}>
+              {`WorkersHut, Storehouse, ResourceStone, ResourceCoal, ResourceWood, ResourceCopper, ResourceIronwood, ResourceObsidian, ResourceGold, ResourceSilver, ResourceMithral, ResourceAlchemicalSilver, ResourceColdIron, ResourceDeepCrystal, ResourceRuby, ResourceDiamonds, ResourceHartwood, ResourceIgnium, ResourceTwilightQuartz, ResourceTrueIce, ResourceAdamantine, ResourceSapphire, ResourceEtherealSilica, ResourceDragonhide, ResourceLabor, ResourceAncientFragment, ResourceDonkey, ResourceKnightT1, ResourceKnightT2, ResourceKnightT3, ResourceCrossbowmanT1, ResourceCrossbowmanT2, ResourceCrossbowmanT3, ResourcePaladinT1, ResourcePaladinT2, ResourcePaladinT3, ResourceWheat, ResourceFish`}
+            </pre>
+            <div style={{ marginTop: 8, color: '#aaa', fontSize: '0.85em' }}>Use these building names in the JSON for build scripts.</div>
+          </div>
+        ) },
+        { name: 'About Scripts', component: () => (
+          <div style={{ fontSize: '0.95em', color: '#ccc', fontFamily: 'monospace' }}>
+            <ul style={{ margin: 0, paddingLeft: 18, color: '#aaa', fontSize: '0.92em' }}>
+              <li><b>Get owned structures id</b>: Fetches your owned Realms, Banks, and Villages as JSON.</li>
+              <li><b>Transfer and deposit</b>: Batch transfer resources between realms and deposit arrivals.</li>
+              <li><b>Auto Resource Producer</b>: Prepares and executes resource production plans for your realms.</li>
+              <li><b>Create buildings</b>: Batch create buildings on your realms using JSON input.</li>
+              <li><b>Auto Explore Armies</b>: Moves armies to explore adjacent tiles automatically.</li>
+              <li><b>Create All Realm Armies</b>: Creates armies for all your realms if resources are available.</li>
+            </ul>
+          </div>
+        ) },
+      ],
+    },
   ];
-
-  const ActiveScriptComponent = availableScripts.find(script => script.id === selectedScript)?.component || PlaceholderScriptComponent;
 
   const panelStyle: React.CSSProperties = {
     position: 'fixed',
-    top: '20px',
-    left: '65%',
+    top: '2%',
+    left: '60%',
     transform: 'translateX(-50%)',
-    width: '400px',
-    maxHeight: '80vh',
-    backgroundColor: 'rgba(50, 50, 50, 0.9)',
+    width: '40%',
+    height: '90%',
+    backgroundColor: 'rgba(40, 40, 40, 0.98)',
     border: '1px solid #666',
-    borderRadius: '8px',
+    borderRadius: '12px',
     color: 'white',
     zIndex: 1000,
     display: 'flex',
     flexDirection: 'column',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
     overflow: 'hidden',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+  };
+
+  const contentContainerStyle: React.CSSProperties = {
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
+    background: '#232323',
   };
 
   const minimizedButtonStyle: React.CSSProperties = {
     position: 'fixed',
-    top: '20px',
-    left: '65%',
+    top: '2%',
+    left: '60%',
     transform: 'translateX(-50%)',
-    padding: '10px 20px',
-    backgroundColor: 'rgba(50, 50, 50, 0.9)',
+    padding: '12px 28px',
+    backgroundColor: 'rgba(40, 40, 40, 0.98)',
     border: '1px solid #666',
-    borderRadius: '8px',
+    borderRadius: '12px',
     color: 'white',
     zIndex: 1000,
     cursor: 'pointer',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+    fontSize: '1.1em',
   };
 
   const headerStyle: React.CSSProperties = {
-    padding: '8px 12px',
-    backgroundColor: '#444',
-    cursor: 'pointer',
+    padding: '12px 18px',
+    backgroundColor: '#333',
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottom: '1px solid #666',
-  };
-
-  const contentStyle: React.CSSProperties = {
-    padding: '12px',
-    flexGrow: 1,
-    overflowY: 'auto',
-  };
-
-  const scriptListStyle: React.CSSProperties = {
-    listStyle: 'none',
-    padding: '0',
-    margin: '0',
-  };
-
-  const scriptListItemStyle: React.CSSProperties = {
-    padding: '8px 12px',
+    fontSize: '1.2em',
+    fontWeight: 600,
     cursor: 'pointer',
-    borderBottom: '1px solid #555',
+    userSelect: 'none',
   };
   
-  const scriptListItemHoverStyle: React.CSSProperties = {
-    backgroundColor: '#5A5A5A',
+  const logAreaStyle: React.CSSProperties = {
+    width: '100%',
+    minHeight: '80px',
+    maxHeight: '120px',
+    background: '#181818',
+    color: '#fff',
+    border: '1px solid #444',
+    borderRadius: '6px',
+    fontFamily: 'monospace',
+    fontSize: '0.95em',
+    margin: '8px 0 0 0',
+    padding: '8px',
+    overflowY: 'auto',
+    resize: 'none',
   };
-
 
   if (!isOpen) {
     return (
-      <button
-        style={minimizedButtonStyle}
-        onClick={() => setIsOpen(true)}
-      >
-        Open Scripts Panel
+      <button style={minimizedButtonStyle} onClick={() => setIsOpen(true)}>
+        Open Companion UI
       </button>
     );
   }
@@ -121,48 +219,95 @@ export const DevToolsPanel: React.FC = () => {
   return (
     <div style={panelStyle}>
       <div style={headerStyle} onClick={() => setIsOpen(false)}>
-        <span>Game Scripts</span>
-        <span>{selectedScript ? `Script: ${availableScripts.find(s => s.id === selectedScript)?.name}` : 'No script selected'}</span>
-        <button onClick={(e) => { e.stopPropagation(); setIsOpen(false); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '1.2em' }}>
-          &times; {/* Minimize/Close Icon */}
+        <span>Companion UI</span>
+        <button
+          onClick={e => { e.stopPropagation(); setIsOpen(false); }}
+          style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: '1.5em' }}
+        >
+          &times;
         </button>
       </div>
-      <div style={contentStyle}>
-        {selectedScript === null ? (
-          <>
-            <h4>Available Scripts:</h4>
-            <ul style={scriptListStyle}>
-              {availableScripts.map((script) => (
-                <li
-                  key={script.id}
-                  style={scriptListItemStyle}
-                  onClick={() => setSelectedScript(script.id)}
-                  onMouseEnter={(e) => {
-                    const targetStyle = (e.target as HTMLLIElement).style;
-                    targetStyle.backgroundColor = scriptListItemHoverStyle.backgroundColor || '';
-                  }}
-                  onMouseLeave={(e) => {
-                    const targetStyle = (e.target as HTMLLIElement).style;
-                    targetStyle.backgroundColor = ''; 
-                  }}
-                >
-                  {script.name}
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : (
-          <>
+      <div style={contentContainerStyle}>
+        <Tab.Group>
+          <Tab.List className="flex bg-[#222] border-b border-[#444]">
+            {tabCategories.map((tab) => (
+              <Tab
+                key={tab.name}
+                className={({ selected }) =>
+                  `flex-1 py-3 px-4 text-lg font-semibold focus:outline-none transition-colors duration-150 ${
+                    selected ? 'bg-[#444] text-white' : 'bg-[#222] text-[#aaa] hover:bg-[#333]'
+                  }`
+                }
+              >
+                {tab.name}
+              </Tab>
+            ))}
+          </Tab.List>
+          <TabPanels className="flex-1">
+            {tabCategories.map((tab) => (
+              <TabPanel key={tab.name} className="h-full p-4">
+                <div className="space-y-8">
+                  {tab.scripts.map((script) => (
+                    <div key={script.name} className="bg-[#292929] rounded-lg p-4 shadow">
+                      {/* Script title */}
+                      <div style={{ fontWeight: 600, fontSize: '1.08em', color: '#fff', marginBottom: 8 }}>{script.name}</div>
+                      {/* Pass log and setLogs as props to each script */}
+                      <script.component log={log} logs={logs} setLogs={setLogs} />
+                    </div>
+                  ))}
+                </div>
+              </TabPanel>
+            ))}
+          </TabPanels>
+        </Tab.Group>
+      </div>
+      
+      {/* Toggleable log area at the bottom */}
+      <div style={{ padding: '0 18px 12px 18px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <label style={{ fontWeight: 500, color: '#aaa', marginBottom: 0, display: 'block', fontSize: '1em' }}>Logs</label>
             <button 
-              onClick={() => setSelectedScript(null)}
-              style={{ marginBottom: '10px', padding: '5px 10px', backgroundColor: '#555', border: 'none', color: 'white', borderRadius: '4px', cursor: 'pointer'}}
+            onClick={() => setShowLogs(v => !v)}
+            style={{ background: '#222', color: '#aaa', border: '1px solid #444', borderRadius: 4, padding: '4px 12px', cursor: 'pointer', fontSize: '0.95em', marginLeft: 12 }}
             >
-              &larr; Back to Scripts
+            {showLogs ? 'Hide Logs' : 'Show Logs'}
             </button>
-            <ActiveScriptComponent />
-          </>
+        </div>
+        {showLogs && (
+          <div style={{
+            background: 'rgba(30, 30, 30, 0.98)',
+            borderTop: '1px solid #666',
+            borderRadius: '0 0 10px 10px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+            padding: '10px 12px',
+            marginTop: 0,
+            marginBottom: 0,
+            transition: 'box-shadow 0.2s',
+          }}>
+            <textarea
+              style={{
+                width: '100%',
+                minHeight: '80px',
+                maxHeight: '120px',
+                background: 'transparent',
+                color: '#fff',
+                border: 'none',
+                outline: 'none',
+                resize: 'none',
+                fontFamily: 'monospace',
+                fontSize: '0.95em',
+                padding: 0,
+                boxShadow: 'none',
+                overflowY: 'auto',
+              }}
+              value={logs.map(l => `[${l.timestamp.toLocaleTimeString()}]${l.script ? ' [' + l.script + ']' : ''} ${l.message}`).join('\n')}
+              readOnly
+            />
+          </div>
         )}
       </div>
     </div>
   );
-}; 
+};
+
+export const DevToolsPanel = CompanionUI; 
