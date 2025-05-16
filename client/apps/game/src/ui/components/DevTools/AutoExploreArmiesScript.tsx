@@ -1,9 +1,14 @@
+import { ClientConfigManager } from '@bibliothecadao/eternum';
 import { useDojo, useExplorersByStructure, usePlayerStructures } from '@bibliothecadao/react';
 import { getTilesFromToriiClient } from "@bibliothecadao/torii-client";
-import { getDirectionBetweenAdjacentHexes, getNeighborHexes, ID, StructureType } from '@bibliothecadao/types';
+import { BiomeType, getDirectionBetweenAdjacentHexes, getNeighborHexes, ID, StructureType, TroopType } from '@bibliothecadao/types';
 import { getComponentValue, Has, runQuery } from '@dojoengine/recs';
 import React, { useCallback, useEffect, useState } from 'react';
 import { normalizedToContractCoords } from '../settlement/settlement-utils';
+
+// Module-scoped variables for persistence across remounts (without localStorage)
+let persistedInputX: string = "";
+let persistedInputY: string = "";
 
 // Add these style variables near the top, after imports
 const labelStyle: React.CSSProperties = { display: 'block', marginBottom: '2px', fontSize: '0.9em' };
@@ -21,25 +26,18 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
   } = useDojo();
 
   const [isLoading, setIsLoading] = useState(false);
-  const [inputX, setInputX] = useState<string>("");
-  const [inputY, setInputY] = useState<string>("");
+  // Initialize state from module-scoped variables
+  const [inputX, setInputX] = useState<string>(persistedInputX);
+  const [inputY, setInputY] = useState<string>(persistedInputY);
 
-  // Persist X and Y to localStorage
+  // Effect to update module-scoped variables when state changes
   useEffect(() => {
-    const savedX = localStorage.getItem("autoExploreInputX");
-    const savedY = localStorage.getItem("autoExploreInputY");
-    if (savedX !== null) setInputX(savedX);
-    if (savedY !== null) setInputY(savedY);
-  }, []);
+    persistedInputX = inputX;
+  }, [inputX]);
 
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      localStorage.setItem("autoExploreInputX", inputX);
-      localStorage.setItem("autoExploreInputY", inputY);
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [inputX, inputY]);
+    persistedInputY = inputY;
+  }, [inputY]);
 
   // Use the hook to get all player structures
   const playerStructures = usePlayerStructures();
@@ -108,7 +106,26 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
       }
       // 4. For each army, find empty adjacent tile closest to target and explore
       const exploredTargets = new Set<string>();
+      // Get config manager instance
+      const configManager = ClientConfigManager.instance();
+
+      // Helper for JSON.stringify to handle BigInts
+      const bigIntReplacer = (key: string, value: any) =>
+        typeof value === 'bigint' ? value.toString() + "n" : value;
+
       for (const army of allPlayerArmies) {
+        // Ensure army and nested properties exist
+        if (!army || !army.troops || !army.troops.stamina || typeof army.troops.stamina.amount !== 'bigint') {
+          log(`Army ${army?.entityId || 'Unknown ID'} missing required stamina data. Skipping.`, 'error', 'AutoExploreArmies');
+          continue;
+        }
+        // Updated check for troop category
+        if (typeof army.troops.category !== 'string' || !army.troops.category) { 
+          log(`Army ${army.entityId} missing or invalid troop category (not a non-empty string). typeof: ${typeof army.troops.category}, value: '${army.troops.category}'. Skipping.`, 'error', 'AutoExploreArmies');
+          // Removed debug log for army.troops
+          continue;
+        }
+
         const neighbors = getNeighborHexes(army.position.x, army.position.y);
         // First pass: unexplored
         let bestTile = null;
@@ -183,7 +200,41 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
         }
         let moveTile = bestTile || fallbackTile;
         let moveExplore = !!bestTile;
+
         if (moveTile) {
+          const targetTileInfo = tileMap.get(`${moveTile.col},${moveTile.row}`);
+          const targetBiome = targetTileInfo?.biome as BiomeType | undefined; // Assuming biome is part of tile info
+
+          // Determine stamina cost
+          let requiredStamina = 0;
+          // army.troops.category is a string like "Knight", "Paladin", etc.
+          const armyTroopType = army.troops.category as TroopType; 
+
+          if (moveExplore) {
+            requiredStamina = configManager.getExploreStaminaCost();
+          } else if (targetBiome !== undefined) {
+            // Check if armyTroopType string is a valid value in the TroopType enum
+            if (Object.values(TroopType).includes(armyTroopType)) {
+               requiredStamina = configManager.getTravelStaminaCost(targetBiome, armyTroopType);
+            } else {
+               log(`Army ${army.entityId} has an unrecognized troop category string ('${army.troops.category}') for travel stamina calculation. Skipping.`, 'error', 'AutoExploreArmies');
+               // Removed debug logs for army.troops and TroopType enum
+               continue;
+            }
+          } else {
+            log(`Could not determine biome for tile (${moveTile.col},${moveTile.row}) for army ${army.entityId}. Skipping stamina check / move.`, 'error', 'AutoExploreArmies');
+            continue; // Skip if biome can't be determined for travel cost
+          }
+
+          const currentStamina = army.troops.stamina.amount;
+          log(`Army ${army.entityId}: Current Stamina: ${currentStamina}, Required: ${requiredStamina} for ${moveExplore ? 'exploring' : 'moving to'} (${moveTile.col},${moveTile.row})`, 'info', 'AutoExploreArmies');
+
+
+          if (currentStamina < BigInt(requiredStamina)) {
+            log(`Army ${army.entityId} has insufficient stamina (${currentStamina}) to ${moveExplore ? 'explore' : 'move'} (requires ${requiredStamina}). Skipping.`, 'info', 'AutoExploreArmies');
+            continue;
+          }
+
           exploredTargets.add(`${moveTile.col},${moveTile.row}`);
           try {
             log(`Army ${army.entityId} at (${army.position.x},${army.position.y}) trying to move to (${moveTile.col},${moveTile.row})`, 'info', 'AutoExploreArmies');
