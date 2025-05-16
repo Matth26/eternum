@@ -1,7 +1,7 @@
 import { ClientConfigManager } from '@bibliothecadao/eternum';
 import { useDojo, useExplorersByStructure, usePlayerStructures } from '@bibliothecadao/react';
 import { getTilesFromToriiClient } from "@bibliothecadao/torii-client";
-import { BiomeType, getDirectionBetweenAdjacentHexes, getNeighborHexes, ID, StructureType, TroopType } from '@bibliothecadao/types';
+import { BiomeType, getDirectionBetweenAdjacentHexes, getNeighborHexes, ID, StructureType, TroopTier, TroopType } from '@bibliothecadao/types';
 import { getComponentValue, Has, runQuery } from '@dojoengine/recs';
 import React, { useCallback, useEffect, useState } from 'react';
 import { normalizedToContractCoords } from '../settlement/settlement-utils';
@@ -125,6 +125,11 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
           // Removed debug log for army.troops
           continue;
         }
+        // Check for troop tier
+        if (typeof army.troops.tier !== 'string' || !army.troops.tier) {
+          log(`Army ${army.entityId} missing or invalid troop tier (not a non-empty string). typeof: ${typeof army.troops.tier}, value: '${army.troops.tier}'. Skipping.`, 'error', 'AutoExploreArmies');
+          continue;
+        }
 
         const neighbors = getNeighborHexes(army.position.x, army.position.y);
         // First pass: unexplored
@@ -209,16 +214,17 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
           let requiredStamina = 0;
           // army.troops.category is a string like "Knight", "Paladin", etc.
           const armyTroopType = army.troops.category as TroopType; 
+          // army.troops.tier is a string like "T1", "T2", etc.
+          const armyTroopTier = army.troops.tier as TroopTier;
 
           if (moveExplore) {
             requiredStamina = configManager.getExploreStaminaCost();
           } else if (targetBiome !== undefined) {
             // Check if armyTroopType string is a valid value in the TroopType enum
-            if (Object.values(TroopType).includes(armyTroopType)) {
+            if (Object.values(TroopType).includes(armyTroopType) && Object.values(TroopTier).includes(armyTroopTier)) {
                requiredStamina = configManager.getTravelStaminaCost(targetBiome, armyTroopType);
             } else {
-               log(`Army ${army.entityId} has an unrecognized troop category string ('${army.troops.category}') for travel stamina calculation. Skipping.`, 'error', 'AutoExploreArmies');
-               // Removed debug logs for army.troops and TroopType enum
+               log(`Army ${army.entityId} has an unrecognized troop category ('${army.troops.category}') or tier ('${army.troops.tier}') for travel stamina calculation. Skipping.`, 'error', 'AutoExploreArmies');
                continue;
             }
           } else {
@@ -226,12 +232,24 @@ export const AutoExploreArmiesScript: React.FC<AutoExploreArmiesScriptProps> = (
             continue; // Skip if biome can't be determined for travel cost
           }
 
-          const currentStamina = army.troops.stamina.amount;
-          log(`Army ${army.entityId}: Current Stamina: ${currentStamina}, Required: ${requiredStamina} for ${moveExplore ? 'exploring' : 'moving to'} (${moveTile.col},${moveTile.row})`, 'info', 'AutoExploreArmies');
+          // Get initial stamina from config
+          let staminaInitial = 0;
+          if (Object.values(TroopType).includes(armyTroopType) && Object.values(TroopTier).includes(armyTroopTier)) {
+            const troopStaminaConfig = configManager.getTroopStaminaConfig(armyTroopType, armyTroopTier);
+            staminaInitial = troopStaminaConfig.staminaInitial;
+          } else {
+            log(`Army ${army.entityId} could not get troopStaminaConfig due to unrecognized category ('${army.troops.category}') or tier ('${army.troops.tier}'). Assuming 0 initial stamina.`, 'info', 'AutoExploreArmies');
+            // Continue with staminaInitial = 0 if config can't be fetched, or handle as error
+          }
+
+          const currentRawStamina = army.troops.stamina.amount;
+          const effectiveCurrentStamina = currentRawStamina + BigInt(staminaInitial);
+
+          log(`Army ${army.entityId}: Effective Stamina: ${effectiveCurrentStamina} (Raw: ${currentRawStamina}, Initial: ${staminaInitial}), Required: ${requiredStamina} for ${moveExplore ? 'exploring' : 'moving to'} (${moveTile.col},${moveTile.row})`, 'info', 'AutoExploreArmies');
 
 
-          if (currentStamina < BigInt(requiredStamina)) {
-            log(`Army ${army.entityId} has insufficient stamina (${currentStamina}) to ${moveExplore ? 'explore' : 'move'} (requires ${requiredStamina}). Skipping.`, 'info', 'AutoExploreArmies');
+          if (effectiveCurrentStamina < BigInt(requiredStamina)) {
+            log(`Army ${army.entityId} has insufficient effective stamina (${effectiveCurrentStamina}) to ${moveExplore ? 'explore' : 'move'} (requires ${requiredStamina}). Skipping.`, 'info', 'AutoExploreArmies');
             continue;
           }
 
