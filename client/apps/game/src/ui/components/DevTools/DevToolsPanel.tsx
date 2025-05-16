@@ -89,7 +89,7 @@ export const CompanionUI: React.FC = () => {
             <ul style={{ margin: 0, paddingLeft: 18, color: '#aaa', fontSize: '0.92em' }}>
               <li><b>Get owned structures id</b>: Fetches your owned Realms, Banks, and Villages as JSON.</li>
               <li><b>Transfer and deposit</b>: Batch transfer resources between realms and deposit all arrivals at once.</li>
-              <li><b>Resource Producer</b>: Prepares and executes resource production plans for your realms in JSON.</li>
+              <li><b>Resource Producer</b>: Prepares and executes resource production plans for your realms in JSON. Amounts are fetched from the on-chain data and not from the JSON.</li>
               <li><b>Create buildings</b>: Batch create buildings on your realms using JSON.</li>
               <li><b>Auto Explore Armies</b>: Moves armies to explore tiles towards coordinates automatically.</li>
               <li><b>Create All Realm Armies</b>: Creates armies for all your realms if 100 army are available.</li>

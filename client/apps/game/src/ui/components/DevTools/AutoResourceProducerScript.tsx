@@ -113,6 +113,59 @@ export const AutoResourceProducerScript: React.FC<AutoResourceProducerScriptProp
     }
   }, [components, log, account]);
 
+  const getFreshRealmDataInternal = useCallback(async () => {
+    log("Fetching fresh realm data internally...", 'info', 'AutoResourceProducer');
+    if (!components) {
+      log("Error: Dojo components not available for fresh data fetch.", 'error', 'AutoResourceProducer');
+      return [];
+    }
+    try {
+      const structureEntities = runQuery([Has(components.Structure)]);
+      const freshRealmsData = Array.from(structureEntities)
+        .map((entityId) => {
+          const structure = getComponentValue(components.Structure, entityId);
+          if (
+            structure &&
+            Number(structure.category) === 1 &&
+            structure.owner &&
+            ("0x" + structure.owner.toString(16)).toLowerCase() === account.address.toLowerCase()
+          ) {
+            const realmInfo = getRealmInfo(entityId, components as ClientComponents);
+            const resourceComponent = getComponentValue(components.Resource, entityId);
+            if (!realmInfo || !resourceComponent) return undefined;
+
+            // Fetch all resources including Wheat, Fish, Labor, Lords for internal use
+            const resources = resourceList
+              .map((res: { trait: string }) => {
+                const key = `${res.trait.toUpperCase().replace(/ /g, '_')}_BALANCE` as keyof typeof resourceComponent;
+                const balance = resourceComponent[key] as bigint | undefined;
+                // For internal fresh data, we keep all resources with their raw balance
+                if (typeof balance === 'bigint') {
+                  // Store the amount as a number, after dividing by precision, for easier handling.
+                  // Contract calls will later multiply by precision.
+                  return { name: res.trait, amount: divideByPrecision(Number(balance)) };
+                }
+                return undefined;
+              })
+              .filter(Boolean);
+
+            return {
+              entityId: structure.entity_id, // This is a number
+              name: realmInfo.name,
+              resources,
+            };
+          }
+          return undefined;
+        })
+        .filter(Boolean);
+      log(`Fetched ${freshRealmsData.length} realms internally.`, 'info', 'AutoResourceProducer');
+      return freshRealmsData;
+    } catch (error) {
+      log(`Error fetching fresh realm data internally: ${(error as Error).message}`, 'error', 'AutoResourceProducer');
+      return []; // Return empty array on error
+    }
+  }, [components, account, log]);
+
   // Handler for batch production
   const handleBatchProduce = useCallback(async () => {
     if (!systemCalls) {
@@ -121,11 +174,73 @@ export const AutoResourceProducerScript: React.FC<AutoResourceProducerScriptProp
     }
     setIsLoading(true);
     try {
-      log("[BatchProduce] Parsing JSON data...", 'info', 'AutoResourceProducer');
-      const parsed = JSON.parse(jsonDataOutput);
-      log(`[BatchProduce] Parsed ${parsed.length} realms from JSON.`, 'info', 'AutoResourceProducer');
+      log("[BatchProduce] Parsing user JSON data...", 'info', 'AutoResourceProducer');
+      const userInputRealms = JSON.parse(jsonDataOutput);
+      log(`[BatchProduce] Parsed ${userInputRealms.length} realms from user JSON.`, 'info', 'AutoResourceProducer');
+
+      log("[BatchProduce] Fetching fresh on-chain data...", 'info', 'AutoResourceProducer');
+      const freshRealmsData = await getFreshRealmDataInternal();
+      if (!freshRealmsData || freshRealmsData.length === 0) {
+        log("Error: Could not fetch fresh realm data or no realms found.", 'error', 'AutoResourceProducer');
+        setIsLoading(false);
+        return;
+      }
+      log(`[BatchProduce] Fetched ${freshRealmsData.length} fresh realm entries.`, 'info', 'AutoResourceProducer');
+
+      // Merge userInputRealms (with percentages) with freshRealmsData (with latest amounts)
+      const mergedRealmsData = userInputRealms.map((userRealm: any) => {
+        const freshRealm = freshRealmsData.find(
+          (fr: any) => String(fr.entityId) === String(userRealm.entityId) || Number(fr.entityId) === Number(userRealm.entityId)
+        );
+        if (!freshRealm) {
+          log(`[WARN] Realm ${userRealm.entityId} from user JSON not found in fresh data. Skipping.`, 'info', 'AutoResourceProducer');
+          return null;
+        }
+
+        // Create a map of fresh resources for quick lookup
+        const freshResourcesMap = new Map(freshRealm.resources.map((r: any) => [r.name, r.amount]));
+
+        const mergedResources = userRealm.resources.map((userRes: any) => {
+          const freshAmount = freshResourcesMap.get(userRes.name);
+          if (freshAmount === undefined) {
+            log(`[WARN] Resource ${userRes.name} in realm ${userRealm.entityId} from user JSON not found in fresh data. Using user JSON amount: ${userRes.amount}.`, 'info', 'AutoResourceProducer');
+            // If somehow a resource in user's JSON is not in fresh data, keep user's amount but this is unlikely
+            return { ...userRes }; 
+          }
+          return {
+            ...userRes, // name, percentForLaborProd, percentOfRawForProd, percentOfLaborForProd
+            amount: freshAmount, // Use the fresh amount from on-chain data
+          };
+        });
+
+        // Ensure Labor is present from fresh data if not in user's JSON structure for some reason
+        const laborResourceName = resourceList.find((r: any) => r.trait === 'Labor')?.trait;
+        if (laborResourceName && freshResourcesMap.has(laborResourceName) && !mergedResources.find((r:any) => r.name === laborResourceName)) {
+            log(`[INFO] Adding fresh Labor amount to realm ${userRealm.entityId}`, 'info', 'AutoResourceProducer');
+            mergedResources.push({
+                name: laborResourceName,
+                amount: freshResourcesMap.get(laborResourceName),
+                percentForLaborProd: 0, // Default percentages for Labor if not specified by user
+                percentOfRawForProd: 0,
+                percentOfLaborForProd: 0,
+            });
+        }
+
+        return {
+          ...userRealm, // entityId, name
+          resources: mergedResources,
+        };
+      }).filter(Boolean);
+
+      log(`[BatchProduce] Merged data for ${mergedRealmsData.length} realms.`, 'info', 'AutoResourceProducer');
+      if (mergedRealmsData.length === 0) {
+        log("No realms to process after merging. Ensure entity IDs in JSON match fetched realms.", 'info', 'AutoResourceProducer');
+        setIsLoading(false);
+        return;
+      }
+
       let totalSteps = 0;
-      for (const realm of parsed) {
+      for (const realm of mergedRealmsData) {
         const resources = realm.resources;
         if (resources.some((r: any) => r.percentForLaborProd > 0)) totalSteps++;
         if (resources.some((r: any) => r.percentOfRawForProd > 0)) totalSteps++;
@@ -133,8 +248,10 @@ export const AutoResourceProducerScript: React.FC<AutoResourceProducerScriptProp
       }
       log(`[BatchProduce] Total steps to process: ${totalSteps}`, 'info', 'AutoResourceProducer');
       let currentStep = 1;
-      for (const realm of parsed) {
-        const entityId = typeof realm.entityId === "string" ? Number(realm.entityId) : realm.entityId;
+
+      for (const realm of mergedRealmsData) {
+        // Ensure entityId is a number for system calls
+        const entityId = Number(realm.entityId);
         const resources = realm.resources;
         log(`[BatchProduce] Processing realm entityId: ${entityId} (step ${currentStep} of ${totalSteps})`, 'info', 'AutoResourceProducer');
         // Batch for labor production
@@ -297,7 +414,7 @@ export const AutoResourceProducerScript: React.FC<AutoResourceProducerScriptProp
     } finally {
       setIsLoading(false);
     }
-  }, [jsonDataOutput, systemCalls, account, log]);
+  }, [jsonDataOutput, systemCalls, account, log, getFreshRealmDataInternal]);
 
   const textAreaStyle: React.CSSProperties = {
     width: "100%",
